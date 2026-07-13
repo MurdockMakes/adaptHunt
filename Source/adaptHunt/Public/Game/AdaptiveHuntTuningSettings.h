@@ -89,7 +89,57 @@ struct ADAPTHUNT_API FAdaptiveMovementTuning
 };
 
 
-/** Timings only; damage, resources, cooldowns, and execution remain owned by combat components. */
+/** Shared combat baselines and explicit enemy-to-player power ratios. */
+USTRUCT(BlueprintType)
+struct ADAPTHUNT_API FAdaptiveCombatBalanceTuning
+{
+    GENERATED_BODY()
+
+    FAdaptiveCombatBalanceTuning();
+
+    UPROPERTY(EditAnywhere, Config, Category = "Player", meta = (ClampMin = "1.0"))
+    float PlayerMaxHealth;
+
+    UPROPERTY(EditAnywhere, Config, Category = "Player", meta = (ClampMin = "1.0"))
+    float PlayerMaxStamina;
+
+    UPROPERTY(EditAnywhere, Config, Category = "Player", meta = (ClampMin = "0.0"))
+    float PlayerLightAttackDamage;
+
+    UPROPERTY(EditAnywhere, Config, Category = "Player", meta = (ClampMin = "0.0"))
+    float PlayerHeavyAttackDamage;
+
+    UPROPERTY(EditAnywhere, Config, Category = "Enemy Multipliers", meta = (ClampMin = "0.1", ClampMax = "10.0"))
+    float EnemyHealthMultiplier;
+
+    UPROPERTY(EditAnywhere, Config, Category = "Enemy Multipliers", meta = (ClampMin = "0.1", ClampMax = "10.0"))
+    float EnemyStaminaMultiplier;
+
+    UPROPERTY(EditAnywhere, Config, Category = "Enemy Multipliers", meta = (ClampMin = "0.1", ClampMax = "10.0"))
+    float EnemyDamageMultiplier;
+
+    /** Secondary attacks use the multiplied enemy light damage as a baseline. */
+    UPROPERTY(EditAnywhere, Config, Category = "Enemy Damage Profiles", meta = (ClampMin = "0.0", ClampMax = "3.0"))
+    float EnemyProjectileDamageScale;
+
+    UPROPERTY(EditAnywhere, Config, Category = "Enemy Damage Profiles", meta = (ClampMin = "0.0", ClampMax = "3.0"))
+    float EnemyDashDamageScale;
+
+    UPROPERTY(EditAnywhere, Config, Category = "Enemy Damage Profiles", meta = (ClampMin = "0.0", ClampMax = "3.0"))
+    float EnemyInterruptDamageScale;
+
+    FAdaptiveCombatBalanceTuning GetSanitized() const;
+    float GetEnemyMaxHealth() const;
+    float GetEnemyMaxStamina() const;
+    float GetEnemyLightAttackDamage() const;
+    float GetEnemyHeavyAttackDamage() const;
+    float GetEnemyProjectileDamage() const;
+    float GetEnemyDashDamage() const;
+    float GetEnemyInterruptDamage() const;
+};
+
+
+/** Timings only; cooldowns and execution remain owned by combat components. */
 USTRUCT(BlueprintType)
 struct ADAPTHUNT_API FAdaptiveActionTimingTuning
 {
@@ -292,6 +342,9 @@ struct ADAPTHUNT_API FAdaptiveTacticalRuntimeTuning
     UPROPERTY(EditAnywhere, Config, Category = "Repetition")
     FEnemyActionRepetitionTuning Repetition;
 
+    UPROPERTY(EditAnywhere, Config, Category = "Offense Defense Balance")
+    FEnemyOffenseDefenseBalanceTuning OffenseDefenseBalance;
+
     UPROPERTY(EditAnywhere, Config, Category = "Recent Outcome")
     FEnemyRecentOutcomeTuning RecentOutcome;
 
@@ -396,6 +449,9 @@ public:
 
     UPROPERTY(EditAnywhere, Config, Category = "Movement")
     FAdaptiveMovementTuning Movement;
+
+    UPROPERTY(EditAnywhere, Config, Category = "Combat Balance")
+    FAdaptiveCombatBalanceTuning CombatBalance;
 
     UPROPERTY(EditAnywhere, Config, Category = "Action Timing")
     FAdaptiveActionTimingTuning ActionTiming;

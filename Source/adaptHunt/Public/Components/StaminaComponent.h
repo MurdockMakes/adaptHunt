@@ -41,6 +41,10 @@ public:
     bool IsDepleted() const;
     bool IsRegenerating() const;
 
+    /** Sets a construction/configuration maximum and restores stamina to full. */
+    UFUNCTION(BlueprintCallable, Category = "Combat|Stamina")
+    void SetMaxStamina(float NewMaxStamina);
+
     /** Spends exactly Cost when affordable; otherwise leaves stamina unchanged. */
     UFUNCTION(BlueprintCallable, Category = "Combat|Stamina")
     bool TryConsumeStamina(float Cost);

@@ -210,6 +210,133 @@ FAdaptiveMovementTuning FAdaptiveMovementTuning::GetSanitized() const
 }
 
 
+FAdaptiveCombatBalanceTuning::FAdaptiveCombatBalanceTuning()
+    : PlayerMaxHealth(100.0f)
+    , PlayerMaxStamina(100.0f)
+    , PlayerLightAttackDamage(20.0f)
+    , PlayerHeavyAttackDamage(40.0f)
+    , EnemyHealthMultiplier(2.0f)
+    , EnemyStaminaMultiplier(1.5f)
+    , EnemyDamageMultiplier(2.0f)
+    , EnemyProjectileDamageScale(0.75f)
+    , EnemyDashDamageScale(1.25f)
+    , EnemyInterruptDamageScale(1.0f)
+{
+}
+
+FAdaptiveCombatBalanceTuning
+FAdaptiveCombatBalanceTuning::GetSanitized() const
+{
+    FAdaptiveCombatBalanceTuning Result;
+    Result.PlayerMaxHealth = SanitizeRange(
+        PlayerMaxHealth,
+        1.0f,
+        10000.0f,
+        Result.PlayerMaxHealth
+    );
+    Result.PlayerMaxStamina = SanitizeRange(
+        PlayerMaxStamina,
+        1.0f,
+        10000.0f,
+        Result.PlayerMaxStamina
+    );
+    Result.PlayerLightAttackDamage = SanitizeRange(
+        PlayerLightAttackDamage,
+        0.0f,
+        10000.0f,
+        Result.PlayerLightAttackDamage
+    );
+    Result.PlayerHeavyAttackDamage = SanitizeRange(
+        PlayerHeavyAttackDamage,
+        0.0f,
+        10000.0f,
+        Result.PlayerHeavyAttackDamage
+    );
+    Result.EnemyHealthMultiplier = SanitizeRange(
+        EnemyHealthMultiplier,
+        0.1f,
+        10.0f,
+        Result.EnemyHealthMultiplier
+    );
+    Result.EnemyStaminaMultiplier = SanitizeRange(
+        EnemyStaminaMultiplier,
+        0.1f,
+        10.0f,
+        Result.EnemyStaminaMultiplier
+    );
+    Result.EnemyDamageMultiplier = SanitizeRange(
+        EnemyDamageMultiplier,
+        0.1f,
+        10.0f,
+        Result.EnemyDamageMultiplier
+    );
+    Result.EnemyProjectileDamageScale = SanitizeRange(
+        EnemyProjectileDamageScale,
+        0.0f,
+        3.0f,
+        Result.EnemyProjectileDamageScale
+    );
+    Result.EnemyDashDamageScale = SanitizeRange(
+        EnemyDashDamageScale,
+        0.0f,
+        3.0f,
+        Result.EnemyDashDamageScale
+    );
+    Result.EnemyInterruptDamageScale = SanitizeRange(
+        EnemyInterruptDamageScale,
+        0.0f,
+        3.0f,
+        Result.EnemyInterruptDamageScale
+    );
+    return Result;
+}
+
+float FAdaptiveCombatBalanceTuning::GetEnemyMaxHealth() const
+{
+    const FAdaptiveCombatBalanceTuning Safe = GetSanitized();
+    return Safe.PlayerMaxHealth * Safe.EnemyHealthMultiplier;
+}
+
+float FAdaptiveCombatBalanceTuning::GetEnemyMaxStamina() const
+{
+    const FAdaptiveCombatBalanceTuning Safe = GetSanitized();
+    return Safe.PlayerMaxStamina * Safe.EnemyStaminaMultiplier;
+}
+
+float FAdaptiveCombatBalanceTuning::GetEnemyLightAttackDamage() const
+{
+    const FAdaptiveCombatBalanceTuning Safe = GetSanitized();
+    return Safe.PlayerLightAttackDamage * Safe.EnemyDamageMultiplier;
+}
+
+float FAdaptiveCombatBalanceTuning::GetEnemyHeavyAttackDamage() const
+{
+    const FAdaptiveCombatBalanceTuning Safe = GetSanitized();
+    return Safe.PlayerHeavyAttackDamage * Safe.EnemyDamageMultiplier;
+}
+
+float FAdaptiveCombatBalanceTuning::GetEnemyProjectileDamage() const
+{
+    const FAdaptiveCombatBalanceTuning Safe = GetSanitized();
+    return Safe.PlayerLightAttackDamage * Safe.EnemyDamageMultiplier
+        * Safe.EnemyProjectileDamageScale;
+}
+
+float FAdaptiveCombatBalanceTuning::GetEnemyDashDamage() const
+{
+    const FAdaptiveCombatBalanceTuning Safe = GetSanitized();
+    return Safe.PlayerLightAttackDamage * Safe.EnemyDamageMultiplier
+        * Safe.EnemyDashDamageScale;
+}
+
+float FAdaptiveCombatBalanceTuning::GetEnemyInterruptDamage() const
+{
+    const FAdaptiveCombatBalanceTuning Safe = GetSanitized();
+    return Safe.PlayerLightAttackDamage * Safe.EnemyDamageMultiplier
+        * Safe.EnemyInterruptDamageScale;
+}
+
+
 FAdaptiveActionTimingTuning::FAdaptiveActionTimingTuning()
     : PlayerLightAttack(0.12f, 0.08f, 0.25f)
     , PlayerHeavyAttack(0.35f, 0.12f, 0.5f)
@@ -530,6 +657,7 @@ FAdaptiveTacticalRuntimeTuning::GetSanitized() const
     Result.Policy = Policy.GetSanitized();
     Result.Selection = Selection.GetSanitized();
     Result.Repetition = Repetition.GetSanitized();
+    Result.OffenseDefenseBalance = OffenseDefenseBalance.GetSanitized();
     Result.RecentOutcome = RecentOutcome.GetSanitized();
     Result.UrgentReactions = UrgentReactions.GetSanitized();
     return Result;

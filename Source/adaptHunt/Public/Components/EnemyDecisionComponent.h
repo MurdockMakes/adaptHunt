@@ -170,11 +170,15 @@ public:
     const FEnemyTacticalTuning& GetTacticalTuning() const;
     const FEnemyActionSelectionTuning& GetActionSelectionTuning() const;
     const FEnemyActionRepetitionTuning& GetRepetitionTuning() const;
+    const FEnemyOffenseDefenseBalanceTuning&
+        GetOffenseDefenseBalanceTuning() const;
     const FEnemyRecentOutcomeTuning& GetRecentOutcomeTuning() const;
     const FEnemyUrgentDecisionTuning& GetUrgentDecisionTuning() const;
     const FEnemyActionSelectionResult& GetLastSelectionResult() const;
     const TMap<EEnemyCombatAction, float>&
         GetLastRepetitionModifiers() const;
+    const TMap<EEnemyCombatAction, float>&
+        GetLastOffenseDefenseBalanceModifiers() const;
     const TMap<EEnemyCombatAction, float>&
         GetLastRecentOutcomeModifiers() const;
     int32 GetRecentCommittedActionCount() const;
@@ -340,6 +344,9 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "AI|Selection|Repetition")
     FEnemyActionRepetitionTuning RepetitionTuning;
 
+    UPROPERTY(EditDefaultsOnly, Category = "AI|Selection|Balance")
+    FEnemyOffenseDefenseBalanceTuning OffenseDefenseBalanceTuning;
+
     UPROPERTY(EditDefaultsOnly, Category = "AI|Selection|Outcome")
     FEnemyRecentOutcomeTuning RecentOutcomeTuning;
 
@@ -405,6 +412,7 @@ private:
     FEnemyUrgentDecisionState UrgentDecisionState;
     FEnemyActionSelectionResult LastSelectionResult;
     TMap<EEnemyCombatAction, float> LastRepetitionModifiers;
+    TMap<EEnemyCombatAction, float> LastOffenseDefenseBalanceModifiers;
     TMap<EEnemyCombatAction, float> LastRecentOutcomeModifiers;
     FAdaptiveCounterBudgetState AdaptiveCounterBudget;
     FAdaptiveCounterOutcomeHistory CounterOutcomeHistory;

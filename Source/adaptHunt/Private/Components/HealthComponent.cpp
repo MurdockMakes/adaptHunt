@@ -91,6 +91,14 @@ void UHealthComponent::SetInvulnerable(const bool bNewInvulnerable)
     bInvulnerable = bNewInvulnerable;
 }
 
+void UHealthComponent::SetMaxHealth(const float NewMaxHealth)
+{
+    MaxHealth = FMath::IsFinite(NewMaxHealth)
+        ? FMath::Max(1.0f, NewMaxHealth)
+        : 100.0f;
+    SetCurrentHealth(MaxHealth, nullptr);
+}
+
 float UHealthComponent::ApplyDamage(
     const float DamageAmount,
     AActor* DamageCauser

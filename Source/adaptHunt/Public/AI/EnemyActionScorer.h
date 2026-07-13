@@ -48,6 +48,12 @@ struct ADAPTHUNT_API FEnemyActionScoringContext
     /** Hard bound for the complete repetition-fatigue channel. */
     float MaximumRepetitionUtilityAdjustment = 0.42f;
 
+    /** Recent offense/defense cadence correction, separate from repetition. */
+    TMap<EEnemyCombatAction, float> OffenseDefenseBalanceUtilityModifiers;
+
+    /** Hard bound for the cadence-balance channel. */
+    float MaximumOffenseDefenseBalanceUtilityAdjustment = 0.35f;
+
     /** Bounded moment-to-moment terminal-result memory. */
     TMap<EEnemyCombatAction, float> RecentOutcomeUtilityModifiers;
 

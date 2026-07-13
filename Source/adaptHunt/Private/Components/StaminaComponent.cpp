@@ -78,6 +78,15 @@ bool UStaminaComponent::IsRegenerating() const
         && World->GetTimerManager().IsTimerActive(RegenerationTimer);
 }
 
+void UStaminaComponent::SetMaxStamina(const float NewMaxStamina)
+{
+    ClearRegenerationTimers();
+    MaxStamina = FMath::IsFinite(NewMaxStamina)
+        ? FMath::Max(1.0f, NewMaxStamina)
+        : 100.0f;
+    SetCurrentStamina(MaxStamina);
+}
+
 bool UStaminaComponent::TryConsumeStamina(const float Cost)
 {
     if (!FMath::IsFinite(Cost) || Cost < 0.0f

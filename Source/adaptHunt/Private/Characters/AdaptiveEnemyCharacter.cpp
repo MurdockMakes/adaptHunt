@@ -10,6 +10,7 @@
 #include "Components/StaminaComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Game/AdaptiveHuntTuningSettings.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "AIController.h"
 #include "UObject/ConstructorHelpers.h"
@@ -17,6 +18,9 @@
 AAdaptiveEnemyCharacter::AAdaptiveEnemyCharacter()
 {
     PrimaryActorTick.bCanEverTick = false;
+
+    const FAdaptiveCombatBalanceTuning CombatBalance =
+        UAdaptiveHuntTuningSettings::Get().CombatBalance.GetSanitized();
 
     GetCapsuleComponent()->InitCapsuleSize(42.0f, 96.0f);
     bUseControllerRotationPitch = false;
@@ -49,6 +53,10 @@ AAdaptiveEnemyCharacter::AAdaptiveEnemyCharacter()
     );
     StaminaComponent = CreateDefaultSubobject<UStaminaComponent>(
         TEXT("StaminaComponent")
+    );
+    HealthComponent->SetMaxHealth(CombatBalance.GetEnemyMaxHealth());
+    StaminaComponent->SetMaxStamina(
+        CombatBalance.GetEnemyMaxStamina()
     );
     EnemyCombatComponent = CreateDefaultSubobject<UEnemyCombatComponent>(
         TEXT("EnemyCombatComponent")

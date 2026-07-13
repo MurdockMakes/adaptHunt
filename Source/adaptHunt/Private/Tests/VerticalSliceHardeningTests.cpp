@@ -110,6 +110,29 @@ bool FAdaptiveCentralTuningTest::RunTest(const FString& Parameters)
             && Movement.EnemyMovementSpeed > 0.0f
     );
 
+    const FAdaptiveCombatBalanceTuning CombatBalance =
+        Settings->CombatBalance.GetSanitized();
+    TestTrue(
+        TEXT("Enemy resource defaults retain the requested power ratios"),
+        FMath::IsNearlyEqual(
+            CombatBalance.GetEnemyMaxHealth(),
+            CombatBalance.PlayerMaxHealth * 2.0f
+        ) && FMath::IsNearlyEqual(
+            CombatBalance.GetEnemyMaxStamina(),
+            CombatBalance.PlayerMaxStamina * 1.5f
+        )
+    );
+    TestTrue(
+        TEXT("Enemy core attacks retain the requested damage ratio"),
+        FMath::IsNearlyEqual(
+            CombatBalance.GetEnemyLightAttackDamage(),
+            CombatBalance.PlayerLightAttackDamage * 2.0f
+        ) && FMath::IsNearlyEqual(
+            CombatBalance.GetEnemyHeavyAttackDamage(),
+            CombatBalance.PlayerHeavyAttackDamage * 2.0f
+        )
+    );
+
     const FAdaptiveActionTimingTuning Timings =
         Settings->ActionTiming.GetSanitized();
     TestTrue(
@@ -186,6 +209,21 @@ bool FAdaptiveCentralTuningTest::RunTest(const FString& Parameters)
                 SafeTimings.PlayerInputBufferDuration,
                 0.5f
             )
+    );
+
+    FAdaptiveCombatBalanceTuning InvalidCombatBalance;
+    InvalidCombatBalance.PlayerMaxHealth = NotANumber;
+    InvalidCombatBalance.PlayerMaxStamina = -5.0f;
+    InvalidCombatBalance.EnemyHealthMultiplier = Infinity;
+    InvalidCombatBalance.EnemyDamageMultiplier = -2.0f;
+    const FAdaptiveCombatBalanceTuning SafeCombatBalance =
+        InvalidCombatBalance.GetSanitized();
+    TestTrue(
+        TEXT("Invalid combat balance values recover to finite hard bounds"),
+        FMath::IsFinite(SafeCombatBalance.PlayerMaxHealth)
+            && SafeCombatBalance.PlayerMaxStamina >= 1.0f
+            && FMath::IsFinite(SafeCombatBalance.EnemyHealthMultiplier)
+            && SafeCombatBalance.EnemyDamageMultiplier >= 0.1f
     );
 
     FAdaptiveFeedbackTuning InvalidFeedback;
@@ -288,6 +326,39 @@ bool FAdaptiveVerticalSliceDefaultWiringTest::RunTest(
                 ).RecoveryDuration,
                 Settings.ActionTiming.GetSanitized()
                     .EnemyHeavyAttack.RecoveryDuration
+            )
+    );
+    const FAdaptiveCombatBalanceTuning CombatBalance =
+        Settings.CombatBalance.GetSanitized();
+    TestTrue(
+        TEXT("Character resources consume the central combat ratios"),
+        Player->GetHealthComponent()
+            && Player->GetStaminaComponent()
+            && Enemy->GetHealthComponent()
+            && Enemy->GetStaminaComponent()
+            && FMath::IsNearlyEqual(
+                Player->GetHealthComponent()->GetMaxHealth(),
+                CombatBalance.PlayerMaxHealth
+            )
+            && FMath::IsNearlyEqual(
+                Enemy->GetHealthComponent()->GetMaxHealth(),
+                CombatBalance.GetEnemyMaxHealth()
+            )
+            && FMath::IsNearlyEqual(
+                Enemy->GetStaminaComponent()->GetMaxStamina(),
+                CombatBalance.GetEnemyMaxStamina()
+            )
+    );
+    TestTrue(
+        TEXT("Combat executors consume the exact two-times damage ratio"),
+        PlayerCombat && EnemyCombat
+            && FMath::IsNearlyEqual(
+                EnemyCombat->GetLightAttackDamage(),
+                PlayerCombat->GetLightAttackDamage() * 2.0f
+            )
+            && FMath::IsNearlyEqual(
+                EnemyCombat->GetHeavyAttackDamage(),
+                PlayerCombat->GetHeavyAttackDamage() * 2.0f
             )
     );
     TestTrue(

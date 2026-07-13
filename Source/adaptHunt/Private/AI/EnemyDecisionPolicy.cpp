@@ -160,6 +160,47 @@ FEnemyActionRepetitionTuning::GetSanitized() const
 }
 
 
+FEnemyOffenseDefenseBalanceTuning::FEnemyOffenseDefenseBalanceTuning()
+    : HistorySize(6)
+    , MinimumHistoryEntries(3)
+    , TargetDefensiveRatio(0.45f)
+    , RatioDeadZone(0.08f)
+    , MaximumBalanceAdjustment(0.35f)
+{
+}
+
+FEnemyOffenseDefenseBalanceTuning
+FEnemyOffenseDefenseBalanceTuning::GetSanitized() const
+{
+    FEnemyOffenseDefenseBalanceTuning Result;
+    Result.HistorySize = FMath::Clamp(HistorySize, 1, 8);
+    Result.MinimumHistoryEntries = FMath::Clamp(
+        MinimumHistoryEntries,
+        1,
+        Result.HistorySize
+    );
+    Result.TargetDefensiveRatio = SanitizeFiniteRange(
+        TargetDefensiveRatio,
+        0.0f,
+        1.0f,
+        Result.TargetDefensiveRatio
+    );
+    Result.RatioDeadZone = SanitizeFiniteRange(
+        RatioDeadZone,
+        0.0f,
+        0.25f,
+        Result.RatioDeadZone
+    );
+    Result.MaximumBalanceAdjustment = SanitizeFiniteRange(
+        MaximumBalanceAdjustment,
+        0.0f,
+        0.5f,
+        Result.MaximumBalanceAdjustment
+    );
+    return Result;
+}
+
+
 FEnemyRecentOutcomeTuning::FEnemyRecentOutcomeTuning()
     : MemorySize(6)
     , FailurePenalty(0.08f)
@@ -404,8 +445,13 @@ FEnemyRepetitionModifier FEnemyActionRepetitionPolicy::Evaluate(
     int32 SameActionCount = 0;
     int32 OffensiveCount = 0;
     const TArray<EEnemyCombatAction>& Actions = History.GetActions();
-    for (const EEnemyCombatAction PreviousAction : Actions)
+    const int32 StartIndex = FMath::Max(
+        0,
+        Actions.Num() - SafeTuning.HistorySize
+    );
+    for (int32 Index = StartIndex; Index < Actions.Num(); ++Index)
     {
+        const EEnemyCombatAction PreviousAction = Actions[Index];
         SameActionCount += PreviousAction == Action ? 1 : 0;
         OffensiveCount += FEnemyTacticalPolicy::IsOffensiveAction(
             PreviousAction
@@ -428,6 +474,70 @@ FEnemyRepetitionModifier FEnemyActionRepetitionPolicy::Evaluate(
         -SafeTuning.MaximumRepetitionAdjustment,
         0.0f
     );
+    return Result;
+}
+
+
+FEnemyOffenseDefenseBalanceModifier
+FEnemyOffenseDefenseBalancePolicy::Evaluate(
+    const EEnemyCombatAction Action,
+    const FEnemyCommittedActionHistory& History,
+    const FEnemyOffenseDefenseBalanceTuning& Tuning
+)
+{
+    FEnemyOffenseDefenseBalanceModifier Result;
+    const bool bOffensive = FEnemyTacticalPolicy::IsOffensiveAction(Action);
+    const bool bDefensive = FEnemyTacticalPolicy::IsDefensiveAction(Action);
+    if (!bOffensive && !bDefensive)
+    {
+        return Result;
+    }
+
+    const FEnemyOffenseDefenseBalanceTuning SafeTuning =
+        Tuning.GetSanitized();
+    const TArray<EEnemyCombatAction>& Actions = History.GetActions();
+    const int32 StartIndex = FMath::Max(
+        0,
+        Actions.Num() - SafeTuning.HistorySize
+    );
+    int32 DefensiveCount = 0;
+    for (int32 Index = StartIndex; Index < Actions.Num(); ++Index)
+    {
+        const EEnemyCombatAction PreviousAction = Actions[Index];
+        if (FEnemyTacticalPolicy::IsDefensiveAction(PreviousAction))
+        {
+            ++DefensiveCount;
+            ++Result.EvidenceCount;
+        }
+        else if (FEnemyTacticalPolicy::IsOffensiveAction(PreviousAction))
+        {
+            ++Result.EvidenceCount;
+        }
+    }
+
+    if (Result.EvidenceCount < SafeTuning.MinimumHistoryEntries)
+    {
+        return Result;
+    }
+
+    Result.DefensiveRatio = static_cast<float>(DefensiveCount)
+        / static_cast<float>(Result.EvidenceCount);
+    const float DefensiveDeficit = SafeTuning.TargetDefensiveRatio
+        - Result.DefensiveRatio;
+    const float Magnitude = FMath::Clamp(
+        FMath::Abs(DefensiveDeficit) - SafeTuning.RatioDeadZone,
+        0.0f,
+        SafeTuning.MaximumBalanceAdjustment
+    );
+    if (FMath::IsNearlyZero(Magnitude))
+    {
+        return Result;
+    }
+
+    const bool bNeedsMoreDefense = DefensiveDeficit > 0.0f;
+    Result.Total = (bDefensive == bNeedsMoreDefense)
+        ? Magnitude
+        : -Magnitude;
     return Result;
 }
 

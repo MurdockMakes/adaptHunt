@@ -53,6 +53,33 @@ struct ADAPTHUNT_API FEnemyActionRepetitionTuning
 };
 
 
+/** Keeps recent committed choices near a configurable offense/defense mix. */
+USTRUCT(BlueprintType)
+struct ADAPTHUNT_API FEnemyOffenseDefenseBalanceTuning
+{
+    GENERATED_BODY()
+
+    FEnemyOffenseDefenseBalanceTuning();
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Balance", meta = (ClampMin = "1", ClampMax = "8"))
+    int32 HistorySize;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Balance", meta = (ClampMin = "1", ClampMax = "8"))
+    int32 MinimumHistoryEntries;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Balance", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float TargetDefensiveRatio;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Balance", meta = (ClampMin = "0.0", ClampMax = "0.25"))
+    float RatioDeadZone;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Balance", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+    float MaximumBalanceAdjustment;
+
+    FEnemyOffenseDefenseBalanceTuning GetSanitized() const;
+};
+
+
 /** Short, independently bounded memory of ordinary resolved action results. */
 USTRUCT(BlueprintType)
 struct ADAPTHUNT_API FEnemyRecentOutcomeTuning
@@ -159,6 +186,25 @@ struct ADAPTHUNT_API FEnemyActionRepetitionPolicy
         EEnemyCombatAction Action,
         const FEnemyCommittedActionHistory& History,
         const FEnemyActionRepetitionTuning& Tuning
+    );
+};
+
+
+struct ADAPTHUNT_API FEnemyOffenseDefenseBalanceModifier
+{
+    int32 EvidenceCount = 0;
+    float DefensiveRatio = 0.0f;
+    float Total = 0.0f;
+};
+
+
+/** Pure cadence correction; it affects utility but never availability. */
+struct ADAPTHUNT_API FEnemyOffenseDefenseBalancePolicy
+{
+    static FEnemyOffenseDefenseBalanceModifier Evaluate(
+        EEnemyCombatAction Action,
+        const FEnemyCommittedActionHistory& History,
+        const FEnemyOffenseDefenseBalanceTuning& Tuning
     );
 };
 

@@ -63,6 +63,10 @@ UCombatComponent::UCombatComponent()
 {
     const FAdaptiveActionTimingTuning Tuning =
         UAdaptiveHuntTuningSettings::Get().ActionTiming.GetSanitized();
+    const FAdaptiveCombatBalanceTuning CombatBalance =
+        UAdaptiveHuntTuningSettings::Get().CombatBalance.GetSanitized();
+    LightAttackDamage = CombatBalance.PlayerLightAttackDamage;
+    HeavyAttackDamage = CombatBalance.PlayerHeavyAttackDamage;
     LightAttackTiming = Tuning.PlayerLightAttack;
     HeavyAttackTiming = Tuning.PlayerHeavyAttack;
     BlockRecoveryDuration = Tuning.PlayerBlockRecoveryDuration;

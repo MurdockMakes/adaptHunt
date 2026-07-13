@@ -535,6 +535,27 @@ FEnemyActionScore FEnemyActionScorer::ScoreAction(
             : 0.0f;
     }
 
+    const float SafeMaximumBalanceAdjustment = FMath::IsFinite(
+        Context.MaximumOffenseDefenseBalanceUtilityAdjustment
+    )
+        ? FMath::Clamp(
+            Context.MaximumOffenseDefenseBalanceUtilityAdjustment,
+            0.0f,
+            0.5f
+        )
+        : 0.0f;
+    if (const float* BalanceAdjustment =
+        Context.OffenseDefenseBalanceUtilityModifiers.Find(Action))
+    {
+        Utility += FMath::IsFinite(*BalanceAdjustment)
+            ? FMath::Clamp(
+                *BalanceAdjustment,
+                -SafeMaximumBalanceAdjustment,
+                SafeMaximumBalanceAdjustment
+            )
+            : 0.0f;
+    }
+
     const float SafeMaximumRecentOutcomeAdjustment = FMath::IsFinite(
         Context.MaximumRecentOutcomeUtilityAdjustment
     )

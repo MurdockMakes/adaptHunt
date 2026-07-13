@@ -50,6 +50,8 @@ UEnemyDecisionComponent::UEnemyDecisionComponent()
     TacticalTuning = TacticalDefaults.Policy;
     ActionSelectionTuning = TacticalDefaults.Selection;
     RepetitionTuning = TacticalDefaults.Repetition;
+    OffenseDefenseBalanceTuning =
+        TacticalDefaults.OffenseDefenseBalance;
     RecentOutcomeTuning = TacticalDefaults.RecentOutcome;
     UrgentDecisionTuning = TacticalDefaults.UrgentReactions;
 
@@ -487,6 +489,7 @@ void UEnemyDecisionComponent::ResetShortTermDecisionMemory()
     UrgentDecisionState.Reset();
     LastSelectionResult = FEnemyActionSelectionResult();
     LastRepetitionModifiers.Reset();
+    LastOffenseDefenseBalanceModifiers.Reset();
     LastRecentOutcomeModifiers.Reset();
     LastActionScores.Reset();
     LastSelectedUtilityAction = EEnemyCombatAction::None;
@@ -893,6 +896,12 @@ UEnemyDecisionComponent::GetRepetitionTuning() const
     return RepetitionTuning;
 }
 
+const FEnemyOffenseDefenseBalanceTuning&
+UEnemyDecisionComponent::GetOffenseDefenseBalanceTuning() const
+{
+    return OffenseDefenseBalanceTuning;
+}
+
 const FEnemyRecentOutcomeTuning&
 UEnemyDecisionComponent::GetRecentOutcomeTuning() const
 {
@@ -915,6 +924,12 @@ const TMap<EEnemyCombatAction, float>&
 UEnemyDecisionComponent::GetLastRepetitionModifiers() const
 {
     return LastRepetitionModifiers;
+}
+
+const TMap<EEnemyCombatAction, float>&
+UEnemyDecisionComponent::GetLastOffenseDefenseBalanceModifiers() const
+{
+    return LastOffenseDefenseBalanceModifiers;
 }
 
 const TMap<EEnemyCombatAction, float>&
@@ -1480,10 +1495,14 @@ FEnemyActionScoringContext UEnemyDecisionComponent::BuildScoringContext(
         SafeOutcomeTuning.MaximumUtilityAdjustment;
     const FEnemyActionRepetitionTuning SafeRepetitionTuning =
         RepetitionTuning.GetSanitized();
+    const FEnemyOffenseDefenseBalanceTuning SafeBalanceTuning =
+        OffenseDefenseBalanceTuning.GetSanitized();
     const FEnemyRecentOutcomeTuning SafeRecentOutcomeTuning =
         RecentOutcomeTuning.GetSanitized();
     Context.MaximumRepetitionUtilityAdjustment =
         SafeRepetitionTuning.MaximumRepetitionAdjustment;
+    Context.MaximumOffenseDefenseBalanceUtilityAdjustment =
+        SafeBalanceTuning.MaximumBalanceAdjustment;
     Context.MaximumRecentOutcomeUtilityAdjustment =
         SafeRecentOutcomeTuning.MaximumOutcomeAdjustment;
     const bool bProfileAffectsPlay = bPredictionUsageEnabled
@@ -1543,6 +1562,14 @@ FEnemyActionScoringContext UEnemyDecisionComponent::BuildScoringContext(
                 SafeRepetitionTuning
             ).Total
         );
+        Context.OffenseDefenseBalanceUtilityModifiers.Add(
+            Action,
+            FEnemyOffenseDefenseBalancePolicy::Evaluate(
+                Action,
+                CommittedActionHistory,
+                SafeBalanceTuning
+            ).Total
+        );
         Context.RecentOutcomeUtilityModifiers.Add(
             Action,
             FEnemyRecentOutcomePolicy::Evaluate(
@@ -1586,6 +1613,8 @@ bool UEnemyDecisionComponent::TryExecuteUtilityAction(
     LastSelectedUtilityAction = EEnemyCombatAction::None;
     LastSelectionResult = FEnemyActionSelectionResult();
     LastRepetitionModifiers = Context.RepetitionUtilityModifiers;
+    LastOffenseDefenseBalanceModifiers =
+        Context.OffenseDefenseBalanceUtilityModifiers;
     LastRecentOutcomeModifiers = Context.RecentOutcomeUtilityModifiers;
 
     TSet<EEnemyCombatAction> RejectedActions;
@@ -1617,7 +1646,10 @@ bool UEnemyDecisionComponent::TryExecuteUtilityAction(
             );
             CommittedActionHistory.Record(
                 Selection.Action,
-                RepetitionTuning.GetSanitized().HistorySize
+                FMath::Max(
+                    RepetitionTuning.GetSanitized().HistorySize,
+                    OffenseDefenseBalanceTuning.GetSanitized().HistorySize
+                )
             );
             LastSelectedUtilityAction = Selection.Action;
             LastSelectedAction = Selection.Action;
@@ -1633,7 +1665,7 @@ bool UEnemyDecisionComponent::TryExecuteUtilityAction(
                 TEXT(
                     "Enemy %s decision selected %s at raw %.3f "
                     "(best %.3f, candidates %d, repetition %+.3f, "
-                    "recent outcome %+.3f)."
+                    "balance %+.3f, recent outcome %+.3f)."
                 ),
                 bLastDecisionUrgent ? TEXT("urgent") : TEXT("normal"),
                 ActionEnum
@@ -1645,6 +1677,9 @@ bool UEnemyDecisionComponent::TryExecuteUtilityAction(
                 Selection.BestScore,
                 Selection.CandidateActions.Num(),
                 LastRepetitionModifiers.FindRef(Selection.Action),
+                LastOffenseDefenseBalanceModifiers.FindRef(
+                    Selection.Action
+                ),
                 LastRecentOutcomeModifiers.FindRef(Selection.Action)
             );
             return true;

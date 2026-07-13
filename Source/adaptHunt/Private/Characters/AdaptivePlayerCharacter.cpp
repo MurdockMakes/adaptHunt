@@ -39,6 +39,8 @@ AAdaptivePlayerCharacter::AAdaptivePlayerCharacter()
 
     const FAdaptiveMovementTuning MovementTuning =
         UAdaptiveHuntTuningSettings::Get().Movement.GetSanitized();
+    const FAdaptiveCombatBalanceTuning CombatBalance =
+        UAdaptiveHuntTuningSettings::Get().CombatBalance.GetSanitized();
     MovementAcceleration = MovementTuning.PlayerAcceleration;
     WalkingBrakingDeceleration =
         MovementTuning.PlayerBrakingDeceleration;
@@ -89,6 +91,8 @@ AAdaptivePlayerCharacter::AAdaptivePlayerCharacter()
     StaminaComponent = CreateDefaultSubobject<UStaminaComponent>(
         TEXT("StaminaComponent")
     );
+    HealthComponent->SetMaxHealth(CombatBalance.PlayerMaxHealth);
+    StaminaComponent->SetMaxStamina(CombatBalance.PlayerMaxStamina);
     CombatComponent = CreateDefaultSubobject<UCombatComponent>(
         TEXT("CombatComponent")
     );

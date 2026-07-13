@@ -65,6 +65,13 @@ UEnemyCombatComponent::UEnemyCombatComponent()
 {
     const FAdaptiveActionTimingTuning Tuning =
         UAdaptiveHuntTuningSettings::Get().ActionTiming.GetSanitized();
+    const FAdaptiveCombatBalanceTuning CombatBalance =
+        UAdaptiveHuntTuningSettings::Get().CombatBalance.GetSanitized();
+    LightAttackDamage = CombatBalance.GetEnemyLightAttackDamage();
+    HeavyAttackDamage = CombatBalance.GetEnemyHeavyAttackDamage();
+    ProjectileDamage = CombatBalance.GetEnemyProjectileDamage();
+    DashDamage = CombatBalance.GetEnemyDashDamage();
+    InterruptDamage = CombatBalance.GetEnemyInterruptDamage();
     LightAttackTiming = Tuning.EnemyLightAttack;
     HeavyAttackTiming = Tuning.EnemyHeavyAttack;
     ProjectileTiming = Tuning.EnemyProjectileAttack;

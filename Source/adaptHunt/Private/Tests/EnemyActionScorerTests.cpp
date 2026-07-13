@@ -76,6 +76,20 @@ bool FAdaptiveEnemyUtilityDefenseAndHistoryTest::RunTest(
     );
 
     Context.RepetitionUtilityModifiers.Reset();
+    Context.OffenseDefenseBalanceUtilityModifiers.Add(
+        EEnemyCombatAction::LightAttack,
+        -0.35f
+    );
+    Context.OffenseDefenseBalanceUtilityModifiers.Add(
+        EEnemyCombatAction::Block,
+        0.35f
+    );
+    TestTrue(
+        TEXT("A bounded cadence correction can pivot offense to defense"),
+        Scorer.SelectBestAction(Context) == EEnemyCombatAction::Block
+    );
+
+    Context.OffenseDefenseBalanceUtilityModifiers.Reset();
     Context.Snapshot.PreviousPlayerAction =
         EPlayerCombatAction::HeavyAttack;
     const float DodgeScore = Scorer.ScoreAction(

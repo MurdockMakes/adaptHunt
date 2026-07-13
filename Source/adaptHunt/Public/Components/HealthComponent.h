@@ -52,6 +52,10 @@ public:
     /** Dodge and future combat states can temporarily reject all damage. */
     void SetInvulnerable(bool bNewInvulnerable);
 
+    /** Sets a construction/configuration maximum and restores health to full. */
+    UFUNCTION(BlueprintCallable, Category = "Combat|Health")
+    void SetMaxHealth(float NewMaxHealth);
+
     /** Returns the amount of health actually removed. */
     UFUNCTION(BlueprintCallable, Category = "Combat|Health")
     float ApplyDamage(float DamageAmount, AActor* DamageCauser = nullptr);

@@ -220,6 +220,118 @@ bool FAdaptiveRepetitionFatigueTest::RunTest(const FString& Parameters)
 
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FAdaptiveOffenseDefenseBalanceTest,
+    "adaptHunt.Milestone29.OffenseDefenseBalance",
+    EAutomationTestFlags::EditorContext
+        | EAutomationTestFlags::ClientContext
+        | EAutomationTestFlags::EngineFilter
+)
+
+bool FAdaptiveOffenseDefenseBalanceTest::RunTest(
+    const FString& Parameters
+)
+{
+    static_cast<void>(Parameters);
+    FEnemyOffenseDefenseBalanceTuning Tuning;
+
+    FEnemyCommittedActionHistory OffensiveHistory;
+    for (int32 Index = 0; Index < Tuning.HistorySize; ++Index)
+    {
+        OffensiveHistory.Record(
+            EEnemyCombatAction::LightAttack,
+            Tuning.HistorySize
+        );
+    }
+    const FEnemyOffenseDefenseBalanceModifier BlockAfterOffense =
+        FEnemyOffenseDefenseBalancePolicy::Evaluate(
+            EEnemyCombatAction::Block,
+            OffensiveHistory,
+            Tuning
+        );
+    const FEnemyOffenseDefenseBalanceModifier AttackAfterOffense =
+        FEnemyOffenseDefenseBalancePolicy::Evaluate(
+            EEnemyCombatAction::HeavyAttack,
+            OffensiveHistory,
+            Tuning
+        );
+    TestTrue(
+        TEXT("Sustained offense makes a defensive commit more credible"),
+        BlockAfterOffense.Total > 0.0f
+            && AttackAfterOffense.Total < 0.0f
+    );
+    TestTrue(
+        TEXT("The offense correction remains independently bounded"),
+        BlockAfterOffense.Total
+            <= Tuning.MaximumBalanceAdjustment + KINDA_SMALL_NUMBER
+            && FMath::IsNearlyEqual(
+                BlockAfterOffense.Total,
+                -AttackAfterOffense.Total
+            )
+    );
+
+    FEnemyCommittedActionHistory DefensiveHistory;
+    for (int32 Index = 0; Index < Tuning.HistorySize; ++Index)
+    {
+        DefensiveHistory.Record(
+            EEnemyCombatAction::Dodge,
+            Tuning.HistorySize
+        );
+    }
+    TestTrue(
+        TEXT("Sustained defense restores attack pressure"),
+        FEnemyOffenseDefenseBalancePolicy::Evaluate(
+            EEnemyCombatAction::LightAttack,
+            DefensiveHistory,
+            Tuning
+        ).Total > 0.0f
+            && FEnemyOffenseDefenseBalancePolicy::Evaluate(
+                EEnemyCombatAction::Block,
+                DefensiveHistory,
+                Tuning
+            ).Total < 0.0f
+    );
+
+    FEnemyCommittedActionHistory BalancedHistory;
+    const EEnemyCombatAction BalancedActions[] = {
+        EEnemyCombatAction::LightAttack,
+        EEnemyCombatAction::Block,
+        EEnemyCombatAction::HeavyAttack,
+        EEnemyCombatAction::Dodge,
+        EEnemyCombatAction::ProjectileAttack,
+        EEnemyCombatAction::Block
+    };
+    for (const EEnemyCombatAction Action : BalancedActions)
+    {
+        BalancedHistory.Record(Action, Tuning.HistorySize);
+    }
+    TestTrue(
+        TEXT("An approximately even cadence needs no correction"),
+        FMath::IsNearlyZero(
+            FEnemyOffenseDefenseBalancePolicy::Evaluate(
+                EEnemyCombatAction::LightAttack,
+                BalancedHistory,
+                Tuning
+            ).Total
+        )
+    );
+
+    FEnemyCommittedActionHistory SparseHistory;
+    SparseHistory.Record(EEnemyCombatAction::LightAttack, Tuning.HistorySize);
+    TestTrue(
+        TEXT("Sparse evidence cannot force an early cadence change"),
+        FMath::IsNearlyZero(
+            FEnemyOffenseDefenseBalancePolicy::Evaluate(
+                EEnemyCombatAction::Block,
+                SparseHistory,
+                Tuning
+            ).Total
+        )
+    );
+    return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FAdaptiveRecentOutcomeMemoryTest,
     "adaptHunt.Milestone28.RecentOutcomeMemory",
     EAutomationTestFlags::EditorContext
@@ -474,6 +586,23 @@ bool FAdaptiveDecisionPolicySanitizationTest::RunTest(
             && SafeRepetition.AccumulatedRepeatPenalty >= 0.0f
     );
 
+    FEnemyOffenseDefenseBalanceTuning Balance;
+    Balance.HistorySize = 100;
+    Balance.MinimumHistoryEntries = 100;
+    Balance.TargetDefensiveRatio = Infinity;
+    Balance.RatioDeadZone = -1.0f;
+    Balance.MaximumBalanceAdjustment = 5.0f;
+    const FEnemyOffenseDefenseBalanceTuning SafeBalance =
+        Balance.GetSanitized();
+    TestTrue(
+        TEXT("Offense-defense balance tuning is finite and bounded"),
+        SafeBalance.HistorySize == 8
+            && SafeBalance.MinimumHistoryEntries == 8
+            && FMath::IsFinite(SafeBalance.TargetDefensiveRatio)
+            && SafeBalance.RatioDeadZone >= 0.0f
+            && SafeBalance.MaximumBalanceAdjustment <= 0.5f
+    );
+
     FEnemyRecentOutcomeTuning Outcome;
     Outcome.MemorySize = -4;
     Outcome.FailurePenalty = Infinity;
@@ -500,6 +629,7 @@ bool FAdaptiveDecisionPolicySanitizationTest::RunTest(
     FAdaptiveTacticalRuntimeTuning Runtime;
     Runtime.Selection = Selection;
     Runtime.Repetition = Repetition;
+    Runtime.OffenseDefenseBalance = Balance;
     Runtime.RecentOutcome = Outcome;
     Runtime.UrgentReactions = Urgent;
     const FAdaptiveTacticalRuntimeTuning SafeRuntime =
@@ -509,6 +639,9 @@ bool FAdaptiveDecisionPolicySanitizationTest::RunTest(
         FMath::IsFinite(SafeRuntime.Selection.NearBestScoreWindow)
             && FMath::IsFinite(
                 SafeRuntime.Repetition.ImmediateRepeatPenalty
+            )
+            && FMath::IsFinite(
+                SafeRuntime.OffenseDefenseBalance.TargetDefensiveRatio
             )
             && FMath::IsFinite(SafeRuntime.RecentOutcome.FailurePenalty)
             && SafeRuntime.UrgentReactions.ThreatReactionDelay >= 0.15f
@@ -523,6 +656,8 @@ bool FAdaptiveDecisionPolicySanitizationTest::RunTest(
                 == FEnemyActionSelectionTuning().NearBestScoreWindow
             && Defaults->GetRepetitionTuning().HistorySize
                 == FEnemyActionRepetitionTuning().HistorySize
+            && Defaults->GetOffenseDefenseBalanceTuning().HistorySize
+                == FEnemyOffenseDefenseBalanceTuning().HistorySize
             && Defaults->GetRecentOutcomeTuning().MemorySize
                 == FEnemyRecentOutcomeTuning().MemorySize
             && Defaults->GetUrgentDecisionTuning().ThreatReactionDelay
