@@ -1,11 +1,18 @@
 #include "Combat/EnemyProjectile.h"
 
+#include "AI/AdaptiveCounterOutcome.h"
+#include "Components/CombatFeedbackComponent.h"
+#include "Components/EnemyCombatComponent.h"
+#include "Components/HealthComponent.h"
 #include "Components/SphereComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 
 AEnemyProjectile::AEnemyProjectile()
     : DamageAmount(12.0f)
+    , SourceCombatComponent(nullptr)
+    , SourceActionId(0)
+    , bOutcomeReported(false)
     , MaximumLifetime(5.0f)
 {
     PrimaryActorTick.bCanEverTick = false;
@@ -46,7 +53,9 @@ void AEnemyProjectile::BeginPlay()
 void AEnemyProjectile::InitializeProjectile(
     const FVector& Direction,
     const float Damage,
-    const float Speed
+    const float Speed,
+    UEnemyCombatComponent* NewSourceCombatComponent,
+    const int32 NewSourceActionId
 )
 {
     DamageAmount = FMath::Max(0.0f, Damage);
@@ -54,6 +63,16 @@ void AEnemyProjectile::InitializeProjectile(
     ProjectileMovement->InitialSpeed = SafeSpeed;
     ProjectileMovement->MaxSpeed = SafeSpeed;
     ProjectileMovement->Velocity = Direction.GetSafeNormal() * SafeSpeed;
+    SourceCombatComponent = NewSourceCombatComponent;
+    SourceActionId = FMath::Max(0, NewSourceActionId);
+}
+
+void AEnemyProjectile::EndPlay(
+    const EEndPlayReason::Type EndPlayReason
+)
+{
+    ReportOutcome(EAdaptiveCounterOutcomeResult::Missed);
+    Super::EndPlay(EndPlayReason);
 }
 
 USphereComponent* AEnemyProjectile::GetCollisionSphere() const
@@ -82,14 +101,95 @@ void AEnemyProjectile::HandleHit(
 {
     if (OtherActor && OtherActor != this && OtherActor != GetOwner())
     {
-        UGameplayStatics::ApplyDamage(
-            OtherActor,
-            DamageAmount,
-            GetInstigatorController(),
-            this,
-            nullptr
-        );
+        UHealthComponent* TargetHealth =
+            OtherActor->FindComponentByClass<UHealthComponent>();
+        UCombatFeedbackComponent* TargetFeedback =
+            OtherActor->FindComponentByClass<UCombatFeedbackComponent>();
+        UCombatFeedbackComponent* OwnerFeedback = GetOwner()
+            ? GetOwner()->FindComponentByClass<UCombatFeedbackComponent>()
+            : nullptr;
+        if (TargetHealth && TargetHealth->IsInvulnerable())
+        {
+            ReportOutcome(EAdaptiveCounterOutcomeResult::Dodged);
+            UGameplayStatics::ApplyDamage(
+                OtherActor,
+                DamageAmount,
+                GetInstigatorController(),
+                this,
+                nullptr
+            );
+            if (TargetFeedback)
+            {
+                TargetFeedback->NotifyAttackDodged(GetOwner());
+            }
+            if (OwnerFeedback)
+            {
+                OwnerFeedback->NotifyAttackMissed();
+            }
+        }
+        else
+        {
+            const bool bBlocked = TargetHealth
+                && TargetHealth->GetDamageReduction() > 0.0f;
+            ReportOutcome(TargetHealth
+                ? (bBlocked
+                    ? EAdaptiveCounterOutcomeResult::Blocked
+                    : EAdaptiveCounterOutcomeResult::Hit)
+                : EAdaptiveCounterOutcomeResult::Missed);
+            UGameplayStatics::ApplyDamage(
+                OtherActor,
+                DamageAmount,
+                GetInstigatorController(),
+                this,
+                nullptr
+            );
+            if (TargetFeedback)
+            {
+                TargetFeedback->NotifyDamageReceived(
+                    GetOwner(),
+                    false,
+                    bBlocked
+                );
+            }
+            if (OwnerFeedback && TargetHealth)
+            {
+                OwnerFeedback->NotifyAttackConnected(false);
+            }
+            else if (OwnerFeedback)
+            {
+                OwnerFeedback->NotifyAttackMissed();
+            }
+        }
+    }
+    else if (UCombatFeedbackComponent* OwnerFeedback = GetOwner()
+        ? GetOwner()->FindComponentByClass<UCombatFeedbackComponent>()
+        : nullptr)
+    {
+        ReportOutcome(EAdaptiveCounterOutcomeResult::Missed);
+        OwnerFeedback->NotifyAttackMissed();
+    }
+    else
+    {
+        ReportOutcome(EAdaptiveCounterOutcomeResult::Missed);
     }
 
     Destroy();
+}
+
+void AEnemyProjectile::ReportOutcome(
+    const EAdaptiveCounterOutcomeResult Result
+)
+{
+    if (bOutcomeReported)
+    {
+        return;
+    }
+    bOutcomeReported = true;
+    if (SourceCombatComponent && SourceActionId > 0)
+    {
+        SourceCombatComponent->ReportProjectileOutcome(
+            SourceActionId,
+            Result
+        );
+    }
 }

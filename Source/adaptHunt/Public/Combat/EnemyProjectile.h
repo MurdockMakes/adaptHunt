@@ -7,6 +7,8 @@
 
 class UProjectileMovementComponent;
 class USphereComponent;
+class UEnemyCombatComponent;
+enum class EAdaptiveCounterOutcomeResult : uint8;
 
 /** Lightweight C++ projectile used by the baseline enemy ranged attack. */
 UCLASS()
@@ -20,7 +22,9 @@ public:
     void InitializeProjectile(
         const FVector& Direction,
         float Damage,
-        float Speed
+        float Speed,
+        UEnemyCombatComponent* SourceCombatComponent = nullptr,
+        int32 SourceActionId = 0
     );
 
     USphereComponent* GetCollisionSphere() const;
@@ -29,6 +33,7 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
     UFUNCTION()
@@ -39,6 +44,7 @@ private:
         FVector NormalImpulse,
         const FHitResult& Hit
     );
+    void ReportOutcome(EAdaptiveCounterOutcomeResult Result);
 
     UPROPERTY(VisibleAnywhere, Category = "Projectile")
     TObjectPtr<USphereComponent> CollisionSphere;
@@ -48,6 +54,12 @@ private:
 
     UPROPERTY(VisibleInstanceOnly, Category = "Projectile")
     float DamageAmount;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UEnemyCombatComponent> SourceCombatComponent;
+
+    int32 SourceActionId;
+    bool bOutcomeReported;
 
     UPROPERTY(EditDefaultsOnly, Category = "Projectile", meta = (ClampMin = "0.1"))
     float MaximumLifetime;

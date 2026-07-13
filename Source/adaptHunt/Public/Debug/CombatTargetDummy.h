@@ -9,7 +9,7 @@ class UCapsuleComponent;
 class UHealthComponent;
 class UStaticMeshComponent;
 
-/** Inert, damageable target used to verify player combat before Milestone 5. */
+/** Inert, damageable target used to verify player combat. */
 UCLASS()
 class ADAPTHUNT_API ACombatTargetDummy : public AActor
 {

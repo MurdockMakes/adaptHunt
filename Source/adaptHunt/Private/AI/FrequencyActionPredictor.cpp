@@ -4,7 +4,7 @@
 
 namespace
 {
-const EPlayerCombatAction PredictableActions[] = {
+const EPlayerCombatAction FrequencyPredictableActions[] = {
     EPlayerCombatAction::LightAttack,
     EPlayerCombatAction::HeavyAttack,
     EPlayerCombatAction::DodgeLeft,
@@ -47,7 +47,7 @@ void FFrequencyActionPredictor::Train(const FCombatDataset& Dataset)
     }
 
     // The fixed action order is an explicit, repeatable tie-break policy.
-    for (const EPlayerCombatAction Action : PredictableActions)
+    for (const EPlayerCombatAction Action : FrequencyPredictableActions)
     {
         const int32 Count = ActionCounts.FindRef(Action);
         if (Count > MostFrequentActionCount)

@@ -65,15 +65,17 @@ bool FAdaptiveEnemyUtilityDefenseAndHistoryTest::RunTest(
     );
 
     Context.Snapshot.EnemyHealthNormalized = 1.0f;
-    Context.Snapshot.PreviousEnemyAction =
-        EEnemyCombatAction::LightAttack;
+    Context.RepetitionUtilityModifiers.Add(
+        EEnemyCombatAction::LightAttack,
+        -0.22f
+    );
     TestTrue(
-        TEXT("The repetition penalty prevents a fixed one-action loop"),
+        TEXT("A pure repetition modifier changes the best close action"),
         Scorer.SelectBestAction(Context)
             == EEnemyCombatAction::HeavyAttack
     );
 
-    Context.Snapshot.PreviousEnemyAction = EEnemyCombatAction::None;
+    Context.RepetitionUtilityModifiers.Reset();
     Context.Snapshot.PreviousPlayerAction =
         EPlayerCombatAction::HeavyAttack;
     const float DodgeScore = Scorer.ScoreAction(

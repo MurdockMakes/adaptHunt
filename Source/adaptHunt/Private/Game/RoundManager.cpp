@@ -5,9 +5,12 @@
 #include "Characters/AdaptivePlayerCharacter.h"
 #include "Combat/EnemyProjectile.h"
 #include "Components/CombatComponent.h"
+#include "Components/CombatFeedbackComponent.h"
 #include "Components/CombatSnapshotComponent.h"
 #include "Components/EnemyCombatComponent.h"
 #include "Components/EnemyDecisionComponent.h"
+#include "Components/EnemyLocomotionComponent.h"
+#include "Components/GreyboxPresentationComponent.h"
 #include "Components/HealthComponent.h"
 #include "Components/PlayerBehaviorTrackerComponent.h"
 #include "Components/StaminaComponent.h"
@@ -15,9 +18,16 @@
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "Game/AdaptiveHuntTuningSettings.h"
+#include "Kismet/GameplayStatics.h"
+#include "CoreGlobals.h"
 
 namespace
 {
+const FString PersistentPlayerPatternSlot =
+    TEXT("AdaptivePlayerPatterns_v1");
+constexpr int32 PersistentPlayerPatternUserIndex = 0;
+
 FString GetRoundWinnerName(const EAdaptiveRoundWinner Winner)
 {
     const UEnum* WinnerEnum = StaticEnum<EAdaptiveRoundWinner>();
@@ -46,11 +56,14 @@ void FAdaptiveRoundProgression::Reset()
     LastCompletedRound = 0;
     Phase = EAdaptiveRoundPhase::WaitingToStart;
     LastWinner = EAdaptiveRoundWinner::None;
+    PlayerRoundWins = 0;
+    EnemyRoundWins = 0;
 }
 
 bool FAdaptiveRoundProgression::BeginMatch()
 {
-    if (Phase == EAdaptiveRoundPhase::InProgress
+    if (Phase == EAdaptiveRoundPhase::PreRoundCountdown
+        || Phase == EAdaptiveRoundPhase::InProgress
         || Phase == EAdaptiveRoundPhase::Intermission)
     {
         return false;
@@ -59,6 +72,20 @@ bool FAdaptiveRoundProgression::BeginMatch()
     CurrentRound = 1;
     LastCompletedRound = 0;
     LastWinner = EAdaptiveRoundWinner::None;
+    PlayerRoundWins = 0;
+    EnemyRoundWins = 0;
+    Phase = EAdaptiveRoundPhase::PreRoundCountdown;
+    return true;
+}
+
+bool FAdaptiveRoundProgression::StartCurrentRound()
+{
+    if (Phase != EAdaptiveRoundPhase::PreRoundCountdown
+        || CurrentRound <= 0 || CurrentRound > TotalRounds)
+    {
+        return false;
+    }
+
     Phase = EAdaptiveRoundPhase::InProgress;
     return true;
 }
@@ -76,6 +103,14 @@ bool FAdaptiveRoundProgression::CompleteCurrentRound(
 
     LastCompletedRound = CurrentRound;
     LastWinner = Winner;
+    if (Winner == EAdaptiveRoundWinner::Player)
+    {
+        ++PlayerRoundWins;
+    }
+    else
+    {
+        ++EnemyRoundWins;
+    }
     Phase = CurrentRound >= TotalRounds
         ? EAdaptiveRoundPhase::MatchComplete
         : EAdaptiveRoundPhase::Intermission;
@@ -91,7 +126,7 @@ bool FAdaptiveRoundProgression::AdvanceToNextRound()
     }
 
     ++CurrentRound;
-    Phase = EAdaptiveRoundPhase::InProgress;
+    Phase = EAdaptiveRoundPhase::PreRoundCountdown;
     return true;
 }
 
@@ -115,6 +150,31 @@ EAdaptiveRoundWinner FAdaptiveRoundProgression::GetLastWinner() const
     return LastWinner;
 }
 
+EAdaptiveRoundWinner FAdaptiveRoundProgression::GetMatchWinner() const
+{
+    if (Phase != EAdaptiveRoundPhase::MatchComplete)
+    {
+        return EAdaptiveRoundWinner::None;
+    }
+    if (PlayerRoundWins == EnemyRoundWins)
+    {
+        return EAdaptiveRoundWinner::None;
+    }
+    return PlayerRoundWins > EnemyRoundWins
+        ? EAdaptiveRoundWinner::Player
+        : EAdaptiveRoundWinner::Enemy;
+}
+
+int32 FAdaptiveRoundProgression::GetPlayerRoundWins() const
+{
+    return PlayerRoundWins;
+}
+
+int32 FAdaptiveRoundProgression::GetEnemyRoundWins() const
+{
+    return EnemyRoundWins;
+}
+
 URoundManager::URoundManager()
     : PlayerCharacter(nullptr)
     , EnemyCharacter(nullptr)
@@ -127,10 +187,20 @@ URoundManager::URoundManager()
     , EnemyStaminaComponent(nullptr)
     , EnemyCombatComponent(nullptr)
     , EnemyDecisionComponent(nullptr)
-    , IntermissionDuration(3.0f)
     , bPredictionsEnabledForCurrentRound(false)
+    , bInputLockedByRoundManager(false)
+    , SavedCurrentSessionSampleCount(0)
     , bInitialized(false)
 {
+    const FAdaptiveMatchFlowTuning FlowTuning =
+        UAdaptiveHuntTuningSettings::Get().MatchFlow.GetSanitized();
+    IntermissionDuration = FlowTuning.IntermissionDuration;
+    PreRoundCountdownDuration = FlowTuning.PreRoundCountdownDuration;
+    const FAdaptiveLearningTuning LearningTuning =
+        UAdaptiveHuntTuningSettings::Get().Adaptation.GetSanitized();
+    bPersistPlayerPatterns = LearningTuning.bPersistPlayerPatterns;
+    MaximumPersistentSamples = LearningTuning.MaximumPersistentSamples;
+
     PrimaryComponentTick.bCanEverTick = false;
 }
 
@@ -161,29 +231,22 @@ bool URoundManager::Initialize(
 
     SnapshotComponent->SetOpponentActor(EnemyCharacter);
     EnemyDecisionComponent->SetTargetActor(PlayerCharacter);
-    EnemyDecisionComponent->SetAutomaticRetrainingEnabled(false);
-    EnemyDecisionComponent->SetPredictionUsageEnabled(false);
-    EnemyDecisionComponent->ResetPredictor();
-    BehaviorTrackerComponent->ResetDataset();
-    LastRoundObservedPattern = FAdaptiveConditionalPattern();
-
-    bInitialized = Progression.BeginMatch();
-    if (!bInitialized)
+    bInitialized = true;
+    if (!StartNewMatch())
     {
         Shutdown();
         return false;
     }
-
-    BeginCurrentRound();
     return true;
 }
 
 void URoundManager::Shutdown()
 {
-    if (UWorld* World = GetWorld())
+    if (bInitialized)
     {
-        World->GetTimerManager().ClearTimer(NextRoundTimer);
+        SaveNewPersistentPlayerPatterns();
     }
+    ClearFlowTimers();
 
     SetIntermissionInputLocked(false);
     UnbindDeathEvents();
@@ -217,7 +280,11 @@ void URoundManager::Shutdown()
     EnemyCombatComponent = nullptr;
     EnemyDecisionComponent = nullptr;
     bPredictionsEnabledForCurrentRound = false;
+    bInputLockedByRoundManager = false;
     LastRoundObservedPattern = FAdaptiveConditionalPattern();
+    AdaptationReveal = FAdaptiveRevealText();
+    PersistentPlayerPatterns.Reset();
+    SavedCurrentSessionSampleCount = 0;
     bInitialized = false;
     Progression.Reset();
 }
@@ -229,11 +296,9 @@ bool URoundManager::AdvanceToNextRoundNow()
         return false;
     }
 
-    if (UWorld* World = GetWorld())
-    {
-        World->GetTimerManager().ClearTimer(NextRoundTimer);
-    }
-    BeginCurrentRound();
+    ClearFlowTimers();
+    PrepareCurrentRound();
+    SchedulePreRoundCountdown();
     return true;
 }
 
@@ -242,6 +307,30 @@ bool URoundManager::ForceEndCurrentRound(
 )
 {
     return EndCurrentRound(Winner);
+}
+
+bool URoundManager::DebugStartCurrentRoundNow()
+{
+    if (!bInitialized
+        || Progression.GetPhase()
+            != EAdaptiveRoundPhase::PreRoundCountdown)
+    {
+        return false;
+    }
+
+    ClearFlowTimers();
+    BeginCurrentRound();
+    return Progression.GetPhase() == EAdaptiveRoundPhase::InProgress;
+}
+
+bool URoundManager::RestartMatch()
+{
+    if (!bInitialized
+        || Progression.GetPhase() != EAdaptiveRoundPhase::MatchComplete)
+    {
+        return false;
+    }
+    return StartNewMatch();
 }
 
 bool URoundManager::IsInitialized() const
@@ -274,6 +363,21 @@ EAdaptiveRoundWinner URoundManager::GetLastWinner() const
     return Progression.GetLastWinner();
 }
 
+EAdaptiveRoundWinner URoundManager::GetMatchWinner() const
+{
+    return Progression.GetMatchWinner();
+}
+
+int32 URoundManager::GetPlayerRoundWins() const
+{
+    return Progression.GetPlayerRoundWins();
+}
+
+int32 URoundManager::GetEnemyRoundWins() const
+{
+    return Progression.GetEnemyRoundWins();
+}
+
 bool URoundManager::ArePredictionsEnabledForCurrentRound() const
 {
     return bPredictionsEnabledForCurrentRound;
@@ -293,6 +397,64 @@ int32 URoundManager::GetTrainedSampleCount() const
         : 0;
 }
 
+int32 URoundManager::GetPersistentPlayerPatternCount() const
+{
+    return PersistentPlayerPatterns.Num();
+}
+
+bool URoundManager::IsPersistentPlayerLearningEnabled() const
+{
+    return bPersistPlayerPatterns;
+}
+
+bool URoundManager::ClearPersistentPlayerPatterns()
+{
+    bool bDeleted = true;
+    if (!GIsAutomationTesting
+        && UGameplayStatics::DoesSaveGameExist(
+            PersistentPlayerPatternSlot,
+            PersistentPlayerPatternUserIndex
+        ))
+    {
+        bDeleted = UGameplayStatics::DeleteGameInSlot(
+            PersistentPlayerPatternSlot,
+            PersistentPlayerPatternUserIndex
+        );
+    }
+
+    PersistentPlayerPatterns.Reset();
+    SavedCurrentSessionSampleCount = 0;
+    if (IsValid(EnemyDecisionComponent))
+    {
+        EnemyDecisionComponent->ClearPersistentTrainingDataset();
+        if (IsValid(BehaviorTrackerComponent)
+            && BehaviorTrackerComponent->GetSampleCount() > 0)
+        {
+            EnemyDecisionComponent->TrainPredictor(
+                BehaviorTrackerComponent->GetDataset()
+            );
+        }
+    }
+
+    if (bDeleted)
+    {
+        UE_LOG(
+            LogAdaptHunt,
+            Log,
+            TEXT("Persistent player-pattern learning cleared; current-session samples remain available.")
+        );
+    }
+    else
+    {
+        UE_LOG(
+            LogAdaptHunt,
+            Warning,
+            TEXT("Persistent player-pattern learning could not be deleted; current-session samples remain available.")
+        );
+    }
+    return bDeleted;
+}
+
 const FAdaptiveConditionalPattern&
 URoundManager::GetLastRoundObservedPattern() const
 {
@@ -304,9 +466,52 @@ float URoundManager::GetIntermissionDuration() const
     return IntermissionDuration;
 }
 
+float URoundManager::GetIntermissionRemainingTime() const
+{
+    if (Progression.GetPhase() != EAdaptiveRoundPhase::Intermission)
+    {
+        return 0.0f;
+    }
+    const UWorld* World = GetWorld();
+    if (!World)
+    {
+        return 0.0f;
+    }
+    const float Remaining =
+        World->GetTimerManager().GetTimerRemaining(NextRoundTimer);
+    return FMath::IsFinite(Remaining) ? FMath::Max(0.0f, Remaining) : 0.0f;
+}
+
+float URoundManager::GetPreRoundCountdownDuration() const
+{
+    return PreRoundCountdownDuration;
+}
+
+float URoundManager::GetPreRoundCountdownRemainingTime() const
+{
+    if (Progression.GetPhase() != EAdaptiveRoundPhase::PreRoundCountdown)
+    {
+        return 0.0f;
+    }
+    const UWorld* World = GetWorld();
+    if (!World)
+    {
+        return 0.0f;
+    }
+    const float Remaining = World->GetTimerManager().GetTimerRemaining(
+        PreRoundCountdownTimer
+    );
+    return FMath::IsFinite(Remaining) ? FMath::Max(0.0f, Remaining) : 0.0f;
+}
+
+const FAdaptiveRevealText& URoundManager::GetAdaptationReveal() const
+{
+    return AdaptationReveal;
+}
+
 bool URoundManager::IsPredictionRound(const int32 RoundNumber)
 {
-    return RoundNumber >= 2
+    return RoundNumber >= 1
         && RoundNumber <= FAdaptiveRoundProgression::TotalRounds;
 }
 
@@ -367,21 +572,124 @@ void URoundManager::UnbindDeathEvents()
     }
 }
 
-void URoundManager::BeginCurrentRound()
+bool URoundManager::StartNewMatch()
+{
+    ResetMatchScopedState();
+    LoadPersistentPlayerPatterns();
+    if (!Progression.BeginMatch())
+    {
+        return false;
+    }
+
+    PrepareCurrentRound();
+    SchedulePreRoundCountdown();
+    UE_LOG(
+        LogAdaptHunt,
+        Log,
+        TEXT(
+            "New match initialized: Round 1 live adaptation, "
+            "persistent patterns=%d, session learning=clear, "
+            "outcomes=clear, projectiles=clear, timers=clear, "
+            "buffered_input=clear, presentation=clear, reveal=clear."
+        ),
+        PersistentPlayerPatterns.Num()
+    );
+    return true;
+}
+
+void URoundManager::ResetMatchScopedState()
+{
+    ClearFlowTimers();
+    if (IsValid(BehaviorTrackerComponent))
+    {
+        BehaviorTrackerComponent->StopTracking();
+    }
+    if (IsValid(EnemyDecisionComponent))
+    {
+        EnemyDecisionComponent->SetDecisionMakingEnabled(false);
+        EnemyDecisionComponent->SetPredictionUsageEnabled(false);
+        EnemyDecisionComponent->SetAutomaticRetrainingEnabled(false);
+    }
+    if (IsValid(PlayerCombatComponent))
+    {
+        PlayerCombatComponent->SetCombatEnabled(false);
+        PlayerCombatComponent->ResetCombatState();
+    }
+    if (IsValid(EnemyCombatComponent))
+    {
+        EnemyCombatComponent->SetCombatEnabled(false);
+        EnemyCombatComponent->ResetCombatState();
+    }
+
+    // Projectiles report their terminal result before the match-scoped outcome
+    // history is cleared, so no in-flight actor can leak into the new match.
+    RemoveLingeringProjectiles();
+    if (IsValid(EnemyDecisionComponent))
+    {
+        EnemyDecisionComponent->ResetPredictor();
+        EnemyDecisionComponent->ClearPersistentTrainingDataset();
+        EnemyDecisionComponent->ResetCounterOutcomeTracking();
+    }
+    if (IsValid(BehaviorTrackerComponent))
+    {
+        BehaviorTrackerComponent->ResetDataset();
+    }
+    if (IsValid(SnapshotComponent))
+    {
+        SnapshotComponent->ResetRoundState();
+    }
+
+    LastRoundObservedPattern = FAdaptiveConditionalPattern();
+    AdaptationReveal = FAdaptiveRevealText();
+    PersistentPlayerPatterns.Reset();
+    SavedCurrentSessionSampleCount = 0;
+    bPredictionsEnabledForCurrentRound = false;
+    Progression.Reset();
+}
+
+void URoundManager::PrepareCurrentRound()
 {
     ResetCombatantsForRound();
-
     const int32 RoundNumber = Progression.GetCurrentRound();
+    EnemyDecisionComponent->ResetShortTermDecisionMemory();
     SnapshotComponent->ResetRoundState();
     SnapshotComponent->SetRoundNumber(RoundNumber);
+    BehaviorTrackerComponent->StopTracking();
+    EnemyDecisionComponent->SetDecisionMakingEnabled(false);
+    EnemyDecisionComponent->SetPredictionUsageEnabled(false);
+    EnemyDecisionComponent->SetAutomaticRetrainingEnabled(false);
+    PlayerCombatComponent->SetCombatEnabled(false);
+    EnemyCombatComponent->SetCombatEnabled(false);
+    bPredictionsEnabledForCurrentRound = false;
+    SetIntermissionInputLocked(true);
+    StopCombatantMovement();
+
+    UE_LOG(
+        LogAdaptHunt,
+        Log,
+        TEXT("Round %d/%d preparing: stage=%s, countdown=%.1fs."),
+        RoundNumber,
+        FAdaptiveRoundProgression::TotalRounds,
+        *FAdaptiveAdaptationRevealPolicy::FormatRoundStage(RoundNumber),
+        FMath::Max(0.0f, PreRoundCountdownDuration)
+    );
+}
+
+void URoundManager::BeginCurrentRound()
+{
+    if (!bInitialized || !Progression.StartCurrentRound())
+    {
+        return;
+    }
+
+    const int32 RoundNumber = Progression.GetCurrentRound();
     BehaviorTrackerComponent->StartTracking();
 
-    bPredictionsEnabledForCurrentRound = IsPredictionRound(RoundNumber)
-        && EnemyDecisionComponent->GetTrainedSampleCount() > 0;
-    EnemyDecisionComponent->SetAutomaticRetrainingEnabled(false);
-    EnemyDecisionComponent->SetPredictionUsageEnabled(
-        bPredictionsEnabledForCurrentRound
-    );
+    // The channel is live in every round. An empty model has no effect, then
+    // committed samples begin influencing play as soon as evidence is valid.
+    bPredictionsEnabledForCurrentRound = true;
+    EnemyDecisionComponent->SetAutomaticRetrainingEnabled(true);
+    EnemyDecisionComponent->SetPredictionUsageEnabled(true);
     EnemyDecisionComponent->SetDecisionMakingEnabled(true);
     PlayerCombatComponent->SetCombatEnabled(true);
     EnemyCombatComponent->SetCombatEnabled(true);
@@ -390,10 +698,14 @@ void URoundManager::BeginCurrentRound()
     UE_LOG(
         LogAdaptHunt,
         Log,
-        TEXT("Round %d/%d started: predictions=%s, trained samples=%d, collected samples=%d."),
+        TEXT("Round %d/%d started: stage=%s, predictions=%s, profile=%s, trained samples=%d, collected samples=%d."),
         RoundNumber,
         FAdaptiveRoundProgression::TotalRounds,
+        *FAdaptiveAdaptationRevealPolicy::FormatRoundStage(RoundNumber),
         bPredictionsEnabledForCurrentRound ? TEXT("enabled") : TEXT("disabled"),
+        EnemyDecisionComponent->GetAdaptiveTacticalProfile().IsActive()
+            ? TEXT("active")
+            : TEXT("baseline"),
         EnemyDecisionComponent->GetTrainedSampleCount(),
         BehaviorTrackerComponent->GetSampleCount()
     );
@@ -415,14 +727,17 @@ bool URoundManager::EndCurrentRound(const EAdaptiveRoundWinner Winner)
     BehaviorTrackerComponent->StopTracking();
     EnemyDecisionComponent->SetDecisionMakingEnabled(false);
     EnemyDecisionComponent->SetPredictionUsageEnabled(false);
+    EnemyDecisionComponent->SetAutomaticRetrainingEnabled(false);
     PlayerCombatComponent->SetCombatEnabled(false);
     EnemyCombatComponent->SetCombatEnabled(false);
+    RemoveLingeringProjectiles();
     bPredictionsEnabledForCurrentRound = false;
     StopCombatantMovement();
     SetIntermissionInputLocked(true);
 
     const int32 CompletedRound = Progression.GetLastCompletedRound();
     const int32 CollectedSamples = BehaviorTrackerComponent->GetSampleCount();
+    SaveNewPersistentPlayerPatterns();
     LastRoundObservedPattern =
         FAdaptiveLearningTelemetryAnalyzer::Analyze(
             BehaviorTrackerComponent->GetDataset(),
@@ -441,6 +756,31 @@ bool URoundManager::EndCurrentRound(const EAdaptiveRoundWinner Winner)
     {
         TrainForNextRound();
     }
+    EnemyDecisionComponent->RebuildAdaptiveTacticalProfile(
+        BehaviorTrackerComponent->GetDataset(),
+        CompletedRound
+    );
+    AdaptationReveal = FAdaptiveAdaptationRevealPolicy::Build(
+        LastRoundObservedPattern,
+        EnemyDecisionComponent->GetAdaptiveTacticalProfile()
+    );
+    UE_LOG(
+        LogAdaptHunt,
+        Log,
+        TEXT(
+            "Round %d adaptation reveal: %s | %s "
+            "[supported_observation=%s active_adjustment=%s]."
+        ),
+        CompletedRound,
+        *AdaptationReveal.Observation,
+        *AdaptationReveal.Adjustment,
+        AdaptationReveal.bHasSupportedObservation
+            ? TEXT("true")
+            : TEXT("false"),
+        AdaptationReveal.bHasActiveAdjustment
+            ? TEXT("true")
+            : TEXT("false")
+    );
 
     UE_LOG(
         LogAdaptHunt,
@@ -465,17 +805,168 @@ bool URoundManager::EndCurrentRound(const EAdaptiveRoundWinner Winner)
 
     if (Progression.GetPhase() == EAdaptiveRoundPhase::MatchComplete)
     {
+        const EAdaptiveRoundWinner MatchWinner =
+            Progression.GetMatchWinner();
         UE_LOG(
             LogAdaptHunt,
             Log,
-            TEXT("Three-round match complete. Final-round winner=%s."),
-            *GetRoundWinnerName(Winner)
+            TEXT(
+                "Three-round match complete: Player %d - %d Enemy, "
+                "match winner=%s. Restart retains %d bounded player patterns."
+            ),
+            Progression.GetPlayerRoundWins(),
+            Progression.GetEnemyRoundWins(),
+            *GetRoundWinnerName(MatchWinner),
+            PersistentPlayerPatterns.Num()
         );
-        OnMatchCompleted.Broadcast(Winner);
+        OnMatchCompleted.Broadcast(MatchWinner);
         return true;
     }
 
     ScheduleNextRound();
+    return true;
+}
+
+void URoundManager::LoadPersistentPlayerPatterns()
+{
+    PersistentPlayerPatterns.Reset();
+    SavedCurrentSessionSampleCount = 0;
+    if (!IsValid(EnemyDecisionComponent))
+    {
+        return;
+    }
+
+    EnemyDecisionComponent->ClearPersistentTrainingDataset();
+    if (!bPersistPlayerPatterns || GIsAutomationTesting)
+    {
+        return;
+    }
+
+    const UAdaptivePlayerPatternSaveGame* SaveGame =
+        Cast<UAdaptivePlayerPatternSaveGame>(
+            UGameplayStatics::LoadGameFromSlot(
+                PersistentPlayerPatternSlot,
+                PersistentPlayerPatternUserIndex
+            )
+        );
+    if (!SaveGame)
+    {
+        UE_LOG(
+            LogAdaptHunt,
+            Log,
+            TEXT("No persistent player-pattern history was found; learning begins live.")
+        );
+        return;
+    }
+    if (SaveGame->SchemaVersion
+        != UAdaptivePlayerPatternSaveGame::CurrentSchemaVersion)
+    {
+        UE_LOG(
+            LogAdaptHunt,
+            Warning,
+            TEXT("Persistent player-pattern history uses unsupported schema %d and was ignored."),
+            SaveGame->SchemaVersion
+        );
+        return;
+    }
+
+    PersistentPlayerPatterns = SaveGame->Patterns;
+    FAdaptivePlayerPatternPolicy::Normalize(
+        PersistentPlayerPatterns,
+        MaximumPersistentSamples
+    );
+    const FCombatDataset PersistentDataset =
+        FAdaptivePlayerPatternPolicy::BuildDataset(
+            PersistentPlayerPatterns
+        );
+    EnemyDecisionComponent->SetPersistentTrainingDataset(
+        PersistentDataset
+    );
+    if (EnemyDecisionComponent->GetTrainedSampleCount() > 0)
+    {
+        EnemyDecisionComponent->RebuildAdaptiveTacticalProfile(
+            PersistentDataset,
+            1
+        );
+    }
+
+    UE_LOG(
+        LogAdaptHunt,
+        Log,
+        TEXT("Loaded %d bounded persistent player patterns; predictor samples=%d, profile=%s."),
+        PersistentPlayerPatterns.Num(),
+        EnemyDecisionComponent->GetTrainedSampleCount(),
+        EnemyDecisionComponent->GetAdaptiveTacticalProfile().IsActive()
+            ? TEXT("active")
+            : TEXT("insufficient evidence")
+    );
+}
+
+bool URoundManager::SaveNewPersistentPlayerPatterns()
+{
+    if (!bPersistPlayerPatterns || GIsAutomationTesting
+        || !IsValid(BehaviorTrackerComponent))
+    {
+        return true;
+    }
+
+    const FCombatDataset& SessionDataset =
+        BehaviorTrackerComponent->GetDataset();
+    if (SavedCurrentSessionSampleCount >= SessionDataset.Num())
+    {
+        return true;
+    }
+
+    TArray<FPersistentPlayerPattern> CandidatePatterns =
+        PersistentPlayerPatterns;
+    const int32 AddedCount = FAdaptivePlayerPatternPolicy::AppendDataset(
+        CandidatePatterns,
+        SessionDataset,
+        SavedCurrentSessionSampleCount,
+        MaximumPersistentSamples
+    );
+    if (AddedCount <= 0)
+    {
+        SavedCurrentSessionSampleCount = SessionDataset.Num();
+        return true;
+    }
+
+    UAdaptivePlayerPatternSaveGame* SaveGame = Cast<
+        UAdaptivePlayerPatternSaveGame>(
+            UGameplayStatics::CreateSaveGameObject(
+                UAdaptivePlayerPatternSaveGame::StaticClass()
+            )
+        );
+    if (!SaveGame)
+    {
+        return false;
+    }
+    SaveGame->Patterns = CandidatePatterns;
+    if (!UGameplayStatics::SaveGameToSlot(
+        SaveGame,
+        PersistentPlayerPatternSlot,
+        PersistentPlayerPatternUserIndex
+    ))
+    {
+        UE_LOG(
+            LogAdaptHunt,
+            Warning,
+            TEXT("Failed to persist %d new player-pattern samples."),
+            AddedCount
+        );
+        return false;
+    }
+
+    PersistentPlayerPatterns = MoveTemp(CandidatePatterns);
+    SavedCurrentSessionSampleCount = SessionDataset.Num();
+    UE_LOG(
+        LogAdaptHunt,
+        Log,
+        TEXT("Persisted %d new player patterns; bounded history=%d/%d."),
+        AddedCount,
+        PersistentPlayerPatterns.Num(),
+        MaximumPersistentSamples
+    );
     return true;
 }
 
@@ -511,10 +1002,35 @@ void URoundManager::ResetCombatantsForRound()
 
     PlayerCombatComponent->ResetCombatState();
     EnemyCombatComponent->ResetCombatState();
+    if (UEnemyLocomotionComponent* Locomotion =
+        EnemyCharacter->GetEnemyLocomotionComponent())
+    {
+        Locomotion->ResetLocomotionState();
+    }
     PlayerHealthComponent->ResetHealth();
     EnemyHealthComponent->ResetHealth();
     PlayerStaminaComponent->ResetStamina();
     EnemyStaminaComponent->ResetStamina();
+    if (UGreyboxPresentationComponent* Presentation =
+        PlayerCharacter->GetGreyboxPresentationComponent())
+    {
+        Presentation->ResetPresentation();
+    }
+    if (UGreyboxPresentationComponent* Presentation =
+        EnemyCharacter->GetGreyboxPresentationComponent())
+    {
+        Presentation->ResetPresentation();
+    }
+    if (UCombatFeedbackComponent* Feedback =
+        PlayerCharacter->GetCombatFeedbackComponent())
+    {
+        Feedback->ResetFeedback();
+    }
+    if (UCombatFeedbackComponent* Feedback =
+        EnemyCharacter->GetCombatFeedbackComponent())
+    {
+        Feedback->ResetFeedback();
+    }
 
     PlayerCharacter->TeleportTo(
         PlayerStartTransform.GetLocation(),
@@ -546,7 +1062,8 @@ void URoundManager::RemoveLingeringProjectiles()
 
 void URoundManager::SetIntermissionInputLocked(const bool bLocked)
 {
-    if (!IsValid(PlayerCharacter))
+    if (!IsValid(PlayerCharacter)
+        || bInputLockedByRoundManager == bLocked)
     {
         return;
     }
@@ -556,6 +1073,7 @@ void URoundManager::SetIntermissionInputLocked(const bool bLocked)
     ))
     {
         PlayerController->SetIgnoreMoveInput(bLocked);
+        bInputLockedByRoundManager = bLocked;
     }
 }
 
@@ -568,6 +1086,36 @@ void URoundManager::StopCombatantMovement() const
     if (IsValid(EnemyCharacter))
     {
         EnemyCharacter->GetCharacterMovement()->StopMovementImmediately();
+    }
+}
+
+void URoundManager::ClearFlowTimers()
+{
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        return;
+    }
+
+    FTimerManager& TimerManager = World->GetTimerManager();
+    TimerManager.ClearTimer(NextRoundTimer);
+    TimerManager.ClearTimer(PreRoundCountdownTimer);
+    TimerManager.ClearAllTimersForObject(this);
+    if (IsValid(PlayerCombatComponent))
+    {
+        TimerManager.ClearAllTimersForObject(PlayerCombatComponent.Get());
+    }
+    if (IsValid(EnemyCombatComponent))
+    {
+        TimerManager.ClearAllTimersForObject(EnemyCombatComponent.Get());
+    }
+    if (IsValid(PlayerCharacter))
+    {
+        TimerManager.ClearAllTimersForObject(PlayerCharacter.Get());
+    }
+    if (IsValid(EnemyCharacter))
+    {
+        TimerManager.ClearAllTimersForObject(EnemyCharacter.Get());
     }
 }
 
@@ -598,9 +1146,41 @@ void URoundManager::ScheduleNextRound()
     );
 }
 
+void URoundManager::SchedulePreRoundCountdown()
+{
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        return;
+    }
+
+    FTimerManager& TimerManager = World->GetTimerManager();
+    if (PreRoundCountdownDuration <= 0.0f)
+    {
+        TimerManager.SetTimerForNextTick(
+            this,
+            &URoundManager::HandlePreRoundCountdownTimer
+        );
+        return;
+    }
+
+    TimerManager.SetTimer(
+        PreRoundCountdownTimer,
+        this,
+        &URoundManager::HandlePreRoundCountdownTimer,
+        PreRoundCountdownDuration,
+        false
+    );
+}
+
 void URoundManager::HandleNextRoundTimer()
 {
     AdvanceToNextRoundNow();
+}
+
+void URoundManager::HandlePreRoundCountdownTimer()
+{
+    BeginCurrentRound();
 }
 
 void URoundManager::HandlePlayerDeath(UHealthComponent*, AActor*)

@@ -431,6 +431,10 @@ bool FAdaptiveRoundAndTargetEdgeCasesTest::RunTest(
 {
     FAdaptiveRoundProgression Progression;
     TestTrue(TEXT("A match begins for transition guard tests"), Progression.BeginMatch());
+    TestTrue(
+        TEXT("The first round begins after its countdown"),
+        Progression.StartCurrentRound()
+    );
     TestFalse(
         TEXT("A round cannot advance before it ends"),
         Progression.AdvanceToNextRound()

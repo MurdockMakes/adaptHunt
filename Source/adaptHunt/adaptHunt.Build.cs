@@ -14,7 +14,10 @@ public class adaptHunt : ModuleRules
                 "CoreUObject",
                 "Engine",
                 "EnhancedInput",
-                "InputCore"
+                "InputCore",
+                "AIModule",
+                "NavigationSystem",
+                "DeveloperSettings"
             }
         );
 

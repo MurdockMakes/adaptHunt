@@ -66,9 +66,9 @@ bool FAdaptivePlayerCombatDefaultsTest::RunTest(const FString& Parameters)
     if (MappingContext)
     {
         TestEqual(
-            TEXT("Seven combat actions have keyboard/mouse and gamepad keys"),
+            TEXT("Combat, movement, and restart actions have keyboard/mouse and gamepad keys"),
             MappingContext->GetMappings().Num(),
-            26
+            28
         );
     }
 

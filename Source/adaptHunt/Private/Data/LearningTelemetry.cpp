@@ -178,6 +178,121 @@ bool IsStrongerPattern(
     }
     return Candidate.TotalSampleCount > Current.TotalSampleCount;
 }
+
+FString GetPredictionSourceDescription(
+    const FPredictionResult& Prediction
+)
+{
+    if (!IsUsableTelemetryPrediction(Prediction))
+    {
+        return TEXT("None");
+    }
+
+    const auto GetPlayerActionName = [](const EPlayerCombatAction Action)
+    {
+        const UEnum* ActionEnum = StaticEnum<EPlayerCombatAction>();
+        return ActionEnum
+            ? ActionEnum->GetDisplayNameTextByValue(
+                static_cast<int64>(Action)
+            ).ToString()
+            : FString(TEXT("Unknown"));
+    };
+    const auto GetEnemyActionName = [](const EEnemyCombatAction Action)
+    {
+        const UEnum* ActionEnum = StaticEnum<EEnemyCombatAction>();
+        return ActionEnum
+            ? ActionEnum->GetDisplayNameTextByValue(
+                static_cast<int64>(Action)
+            ).ToString()
+            : FString(TEXT("Unknown"));
+    };
+
+    if (!Prediction.bUsedContext)
+    {
+        return TEXT("Global Frequency");
+    }
+    if (!Prediction.bUsedDistanceContext)
+    {
+        return FString::Printf(
+            TEXT("After Enemy %s (Any Range)"),
+            *GetEnemyActionName(Prediction.ConditioningEnemyAction)
+        );
+    }
+
+    const TCHAR* DistanceName = TEXT("Medium");
+    if (Prediction.ConditioningDistanceCategory
+        == ECombatDistanceCategory::Close)
+    {
+        DistanceName = TEXT("Close");
+    }
+    else if (Prediction.ConditioningDistanceCategory
+        == ECombatDistanceCategory::Far)
+    {
+        DistanceName = TEXT("Far");
+    }
+    FString Result = FString::Printf(
+        TEXT("After Enemy %s at %s Range"),
+        *GetEnemyActionName(Prediction.ConditioningEnemyAction),
+        DistanceName
+    );
+    if (!Prediction.bUsedPositionContext)
+    {
+        return Result;
+    }
+
+    const TCHAR* PositionName = TEXT("Front");
+    if (Prediction.ConditioningRelativePlayerPosition
+        == ERelativePlayerPosition::Left)
+    {
+        PositionName = TEXT("Left");
+    }
+    else if (Prediction.ConditioningRelativePlayerPosition
+        == ERelativePlayerPosition::Right)
+    {
+        PositionName = TEXT("Right");
+    }
+    else if (Prediction.ConditioningRelativePlayerPosition
+        == ERelativePlayerPosition::Behind)
+    {
+        PositionName = TEXT("Behind");
+    }
+    Result += FString::Printf(TEXT(" (Player %s"), PositionName);
+    if (Prediction.bUsedPreviousPlayerActionContext)
+    {
+        Result += FString::Printf(
+            TEXT(", after Player %s"),
+            *GetPlayerActionName(
+                Prediction.ConditioningPreviousPlayerAction
+            )
+        );
+    }
+    Result += TEXT(")");
+    return Result;
+}
+
+const TCHAR* GetProfileEvidenceReason(
+    const EAdaptiveProfileEvidenceStatus Status
+)
+{
+    switch (Status)
+    {
+    case EAdaptiveProfileEvidenceStatus::NoPrediction:
+        return TEXT("no supported predictor output");
+    case EAdaptiveProfileEvidenceStatus::InsufficientRoundSamples:
+        return TEXT("too few round samples");
+    case EAdaptiveProfileEvidenceStatus::InsufficientContextSamples:
+        return TEXT("too few supporting context samples");
+    case EAdaptiveProfileEvidenceStatus::LowConfidence:
+        return TEXT("confidence below threshold");
+    case EAdaptiveProfileEvidenceStatus::PredictorDisagreement:
+        return TEXT("round evidence conflicts with predictor");
+    case EAdaptiveProfileEvidenceStatus::Active:
+        return TEXT("minimum evidence and confidence met");
+    case EAdaptiveProfileEvidenceStatus::NoData:
+    default:
+        return TEXT("no completed-round evidence");
+    }
+}
 }
 
 bool FAdaptiveConditionalPattern::IsValid() const
@@ -311,7 +426,7 @@ TArray<FString> FAdaptiveDebugTelemetryFormatter::FormatHudLines(
         : 0.0f;
 
     TArray<FString> Lines;
-    Lines.Reserve(17);
+    Lines.Reserve(32);
     Lines.Add(TEXT("ADAPTIVE LEARNING DEBUG"));
     Lines.Add(FString::Printf(
         TEXT("Round: %d / %d (%s)"),
@@ -321,6 +436,27 @@ TArray<FString> FAdaptiveDebugTelemetryFormatter::FormatHudLines(
             ? TEXT("predictions enabled")
             : TEXT("observation")
     ));
+    if (!Snapshot.RoundPresentationStage.IsEmpty())
+    {
+        Lines.Add(FString::Printf(
+            TEXT("Visible Match Stage: %s"),
+            *Snapshot.RoundPresentationStage
+        ));
+    }
+    if (!Snapshot.AdaptationObservation.IsEmpty())
+    {
+        Lines.Add(FString::Printf(
+            TEXT("Visible Reveal: %s"),
+            *Snapshot.AdaptationObservation
+        ));
+    }
+    if (!Snapshot.AdaptationAdjustment.IsEmpty())
+    {
+        Lines.Add(FString::Printf(
+            TEXT("Visible Reveal: %s"),
+            *Snapshot.AdaptationAdjustment
+        ));
+    }
     Lines.Add(FString::Printf(
         TEXT("Player Health: %.1f / %.1f"),
         SanitizeNonNegative(Snapshot.PlayerHealth),
@@ -335,6 +471,11 @@ TArray<FString> FAdaptiveDebugTelemetryFormatter::FormatHudLines(
         TEXT("Player Stamina: %.1f / %.1f"),
         SanitizeNonNegative(Snapshot.PlayerStamina),
         SanitizeNonNegative(Snapshot.PlayerMaxStamina)
+    ));
+    Lines.Add(FString::Printf(
+        TEXT("Enemy Stamina: %.1f / %.1f"),
+        SanitizeNonNegative(Snapshot.EnemyStamina),
+        SanitizeNonNegative(Snapshot.EnemyMaxStamina)
     ));
     Lines.Add(FString::Printf(
         TEXT("Last Player Action: %s"),
@@ -354,80 +495,9 @@ TArray<FString> FAdaptiveDebugTelemetryFormatter::FormatHudLines(
             SafePredictionConfidence * 100.0f
         )
     ));
-    FString PredictionSource = TEXT("None");
-    if (bUsablePrediction)
-    {
-        if (Snapshot.Prediction.bUsedDistanceContext)
-        {
-            const TCHAR* DistanceName = TEXT("Medium");
-            switch (Snapshot.Prediction.ConditioningDistanceCategory)
-            {
-            case ECombatDistanceCategory::Close:
-                DistanceName = TEXT("Close");
-                break;
-            case ECombatDistanceCategory::Far:
-                DistanceName = TEXT("Far");
-                break;
-            default:
-                break;
-            }
-            PredictionSource = FString::Printf(
-                TEXT("After Enemy %s at %s Range"),
-                *GetEnemyActionName(
-                    Snapshot.Prediction.ConditioningEnemyAction
-                ),
-                DistanceName
-            );
-            if (Snapshot.Prediction.bUsedPositionContext)
-            {
-                const TCHAR* PositionName = TEXT("Front");
-                switch (
-                    Snapshot.Prediction.ConditioningRelativePlayerPosition
-                )
-                {
-                case ERelativePlayerPosition::Left:
-                    PositionName = TEXT("Left");
-                    break;
-                case ERelativePlayerPosition::Right:
-                    PositionName = TEXT("Right");
-                    break;
-                case ERelativePlayerPosition::Behind:
-                    PositionName = TEXT("Behind");
-                    break;
-                default:
-                    break;
-                }
-                PredictionSource += FString::Printf(
-                    TEXT(" (Player %s"),
-                    PositionName
-                );
-                if (Snapshot.Prediction.bUsedPreviousPlayerActionContext)
-                {
-                    PredictionSource += FString::Printf(
-                        TEXT(", after Player %s"),
-                        *GetPlayerActionName(
-                            Snapshot.Prediction
-                                .ConditioningPreviousPlayerAction
-                        )
-                    );
-                }
-                PredictionSource += TEXT(")");
-            }
-        }
-        else if (Snapshot.Prediction.bUsedContext)
-        {
-            PredictionSource = FString::Printf(
-                TEXT("After Enemy %s (Any Range)"),
-                *GetEnemyActionName(
-                    Snapshot.Prediction.ConditioningEnemyAction
-                )
-            );
-        }
-        else
-        {
-            PredictionSource = TEXT("Global Frequency");
-        }
-    }
+    const FString PredictionSource = GetPredictionSourceDescription(
+        Snapshot.Prediction
+    );
     Lines.Add(FString::Printf(
         TEXT("Prediction Source: %s"),
         *PredictionSource
@@ -449,6 +519,191 @@ TArray<FString> FAdaptiveDebugTelemetryFormatter::FormatHudLines(
         TEXT("Current Enemy Selected Action: %s"),
         *GetEnemyActionName(Snapshot.CurrentEnemySelectedAction)
     ));
+    Lines.Add(FString::Printf(
+        TEXT("Decision Trigger: %s"),
+        Snapshot.bLastDecisionUrgent ? TEXT("URGENT") : TEXT("NORMAL")
+    ));
+
+    TArray<FString> CandidateNames;
+    for (const EEnemyCombatAction Action :
+        Snapshot.LastSelection.CandidateActions)
+    {
+        CandidateNames.Add(GetEnemyActionName(Action));
+    }
+    Lines.Add(FString::Printf(
+        TEXT(
+            "Near-Best Selection: best %.3f, selected %.3f, "
+            "%d candidate(s) [%s]"
+        ),
+        FMath::IsFinite(Snapshot.LastSelection.BestScore)
+            ? Snapshot.LastSelection.BestScore
+            : 0.0f,
+        FMath::IsFinite(Snapshot.LastSelection.SelectedScore)
+            ? Snapshot.LastSelection.SelectedScore
+            : 0.0f,
+        CandidateNames.Num(),
+        *FString::Join(CandidateNames, TEXT(", "))
+    ));
+    for (const FEnemyDecisionModifierTelemetry& Modifier :
+        Snapshot.LastDecisionModifiers)
+    {
+        Lines.Add(FString::Printf(
+            TEXT("  %s modifiers: repetition %+.3f, recent outcome %+.3f"),
+            *GetEnemyActionName(Modifier.Action),
+            FMath::IsFinite(Modifier.RepetitionModifier)
+                ? Modifier.RepetitionModifier
+                : 0.0f,
+            FMath::IsFinite(Modifier.RecentOutcomeModifier)
+                ? Modifier.RecentOutcomeModifier
+                : 0.0f
+        ));
+    }
+    Lines.Add(FString::Printf(
+        TEXT("Short-Term Memory: %d commits, %d resolved outcomes"),
+        FMath::Max(0, Snapshot.RecentCommittedActionCount),
+        FMath::Max(0, Snapshot.RecentOutcomeMemoryCount)
+    ));
+
+    const FAdaptiveTacticalProfile& Profile =
+        Snapshot.AdaptiveTacticalProfile;
+    const TCHAR* ProfilePlayState = Profile.IsActive()
+        ? (Snapshot.bPredictionsEnabled ? TEXT("ACTIVE") : TEXT("READY"))
+        : TEXT("BASELINE");
+    Lines.Add(FString::Printf(
+        TEXT("Adaptive Tactical Profile: %s - %s"),
+        ProfilePlayState,
+        GetProfileEvidenceReason(Profile.EvidenceStatus)
+    ));
+    Lines.Add(FString::Printf(
+        TEXT("Profile Evidence: %s at %d%% (%d/%d context, %d round)"),
+        *GetPlayerActionName(Profile.MostLikelyPlayerAction),
+        FMath::RoundToInt(FMath::Clamp(Profile.Confidence, 0.0f, 1.0f)
+            * 100.0f),
+        FMath::Max(0, Profile.SupportingSampleCount),
+        FMath::Max(0, Profile.ContextSampleCount),
+        FMath::Max(0, Profile.RoundSampleCount)
+    ));
+    Lines.Add(FString::Printf(
+        TEXT("Profile Context: %s"),
+        *GetPredictionSourceDescription(Profile.EvidencePrediction)
+    ));
+
+    const TCHAR* OrbitName = TEXT("Seeded");
+    if (Profile.OrbitPreference == EAdaptiveOrbitPreference::Left)
+    {
+        OrbitName = TEXT("Left");
+    }
+    else if (Profile.OrbitPreference == EAdaptiveOrbitPreference::Right)
+    {
+        OrbitName = TEXT("Right");
+    }
+    Lines.Add(FString::Printf(
+        TEXT("Profile Counter: %s (%d uses left, %.1fs cooldown)"),
+        *GetEnemyActionName(Profile.PreferredCounterAction),
+        FMath::Max(0, Snapshot.AdaptiveCounterUsesRemaining),
+        SanitizeNonNegative(Snapshot.AdaptiveCounterCooldownRemaining)
+    ));
+    Lines.Add(FString::Printf(
+        TEXT("Profile Changes: spacing %+.0f, aggression %+.0f%%, defense %+.0f%%, heal interrupt +%.0f%%, orbit %s"),
+        FMath::IsFinite(Profile.PreferredSpacingAdjustment)
+            ? Profile.PreferredSpacingAdjustment
+            : 0.0f,
+        (FMath::IsFinite(Profile.AggressionAdjustment)
+            ? Profile.AggressionAdjustment
+            : 0.0f) * 100.0f,
+        (FMath::IsFinite(Profile.DefensiveAdjustment)
+            ? Profile.DefensiveAdjustment
+            : 0.0f) * 100.0f,
+        SanitizeNonNegative(Profile.HealInterruptionPriority) * 100.0f,
+        OrbitName
+    ));
+
+    Lines.Add(FString::Printf(
+        TEXT("Resolved Enemy Action Outcomes: %d"),
+        FMath::Max(0, Snapshot.CounterOutcomeCount)
+    ));
+    if (Snapshot.bHasLastCounterOutcome
+        && Snapshot.LastCounterOutcome.IsValid())
+    {
+        const FAdaptiveCounterOutcomeRecord& Outcome =
+            Snapshot.LastCounterOutcome;
+        const FString PredictedAction = Outcome.Prediction.bHasPrediction
+            ? GetPlayerActionName(Outcome.Prediction.PredictedAction)
+            : FString(TEXT("None"));
+        const TCHAR* Worked = Outcome.IsAdaptiveCounterAttempt()
+            ? (Outcome.WasSuccessfulCounter()
+                ? TEXT("worked")
+                : TEXT("did not work"))
+            : TEXT("not an adaptive opportunity");
+        Lines.Add(FString::Printf(
+            TEXT("Last Counter Evaluation: predicted %s at %d%% -> chose %s -> %s (%s)"),
+            *PredictedAction,
+            FMath::RoundToInt(FMath::Clamp(
+                Outcome.Prediction.Confidence,
+                0.0f,
+                1.0f
+            ) * 100.0f),
+            *GetEnemyActionName(Outcome.Action),
+            *GetAdaptiveCounterOutcomeName(Outcome.Result),
+            Worked
+        ));
+        Lines.Add(FString::Printf(
+            TEXT("  Round %d context: %s; applied=%s, opportunity=%s"),
+            Outcome.RoundNumber,
+            *GetPredictionSourceDescription(Outcome.Prediction),
+            Outcome.bPredictionApplied ? TEXT("true") : TEXT("false"),
+            Outcome.bAdaptiveCounterOpportunity
+                ? TEXT("true")
+                : TEXT("false")
+        ));
+    }
+    else
+    {
+        Lines.Add(TEXT("Last Counter Evaluation: no resolved enemy action."));
+    }
+
+    const FAdaptiveCounterEffectivenessSummary& ActiveEffectiveness =
+        Snapshot.ActiveCounterEffectiveness;
+    if (ActiveEffectiveness.HasSamples())
+    {
+        Lines.Add(FString::Printf(
+            TEXT("Outcome Secondary Modifier: %s vs predicted %s, %d/%d worked, %s, utility %+.1f%%"),
+            *GetEnemyActionName(ActiveEffectiveness.CounterAction),
+            *GetPlayerActionName(
+                ActiveEffectiveness.PredictedPlayerAction
+            ),
+            ActiveEffectiveness.SuccessfulCount,
+            ActiveEffectiveness.SampleCount,
+            ActiveEffectiveness.bMeetsMinimumSamples
+                ? TEXT("evidence active")
+                : TEXT("insufficient samples"),
+            ActiveEffectiveness.UtilityModifier * 100.0f
+        ));
+    }
+    else
+    {
+        Lines.Add(TEXT("Outcome Secondary Modifier: no matching counter samples."));
+    }
+
+    for (const FAdaptiveCounterEffectivenessSummary& Effectiveness :
+        Snapshot.LastRoundCounterEffectiveness)
+    {
+        Lines.Add(FString::Printf(
+            TEXT("Round %d Effectiveness: %s vs predicted %s = %d/%d worked (smoothed %d%%, utility %+.1f%%, %s)"),
+            Effectiveness.RoundNumber,
+            *GetEnemyActionName(Effectiveness.CounterAction),
+            *GetPlayerActionName(Effectiveness.PredictedPlayerAction),
+            Effectiveness.SuccessfulCount,
+            Effectiveness.SampleCount,
+            FMath::RoundToInt(
+                Effectiveness.SmoothedEffectiveness * 100.0f
+            ),
+            Effectiveness.UtilityModifier * 100.0f,
+            Effectiveness.bMeetsMinimumSamples
+                ? TEXT("eligible")
+                : TEXT("insufficient")
+        ));
+    }
 
     if (Snapshot.LastCompletedRound > 0
         && Snapshot.LastCompletedRound <= SafeTotalRounds)

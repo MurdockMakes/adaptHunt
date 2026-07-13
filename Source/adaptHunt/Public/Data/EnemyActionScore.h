@@ -17,6 +17,10 @@ struct ADAPTHUNT_API FEnemyActionScore
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Utility")
     float Score = 0.0f;
 
+    /** Raw finite utility retained so display clamping cannot erase ranking. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Utility")
+    float UnclampedScore = -MAX_flt;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Utility")
     bool bAvailable = false;
 };
