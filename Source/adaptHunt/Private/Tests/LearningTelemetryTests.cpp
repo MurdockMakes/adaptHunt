@@ -193,6 +193,18 @@ bool FAdaptiveDebugHudTelemetryTest::RunTest(const FString& Parameters)
     Snapshot.Prediction.bHasPrediction = true;
     Snapshot.Prediction.PredictedAction = EPlayerCombatAction::Heal;
     Snapshot.Prediction.Confidence = 0.72f;
+    Snapshot.Prediction.bUsedContext = true;
+    Snapshot.Prediction.ConditioningEnemyAction =
+        EEnemyCombatAction::HeavyAttack;
+    Snapshot.Prediction.bUsedDistanceContext = true;
+    Snapshot.Prediction.ConditioningDistanceCategory =
+        ECombatDistanceCategory::Close;
+    Snapshot.Prediction.bUsedPositionContext = true;
+    Snapshot.Prediction.ConditioningRelativePlayerPosition =
+        ERelativePlayerPosition::Behind;
+    Snapshot.Prediction.bUsedPreviousPlayerActionContext = true;
+    Snapshot.Prediction.ConditioningPreviousPlayerAction =
+        EPlayerCombatAction::Block;
     Snapshot.CollectedSampleCount = 12;
     Snapshot.MostCommonPlayerAction = EPlayerCombatAction::DodgeLeft;
     Snapshot.CurrentEnemySelectedAction = EEnemyCombatAction::HeavyAttack;
@@ -232,6 +244,10 @@ bool FAdaptiveDebugHudTelemetryTest::RunTest(const FString& Parameters)
         TEXT("Last Player Action: Dodge Left"),
         TEXT("Predicted Next Player Action: Heal"),
         TEXT("Prediction Confidence: 72%"),
+        TEXT(
+            "Prediction Source: After Enemy Heavy Attack at Close Range "
+            "(Player Behind, after Player Block)"
+        ),
         TEXT("Collected Training Samples: 12"),
         TEXT("Most Common Player Action: Dodge Left"),
         TEXT("Strongest Learned Conditional Pattern:"),
@@ -247,6 +263,42 @@ bool FAdaptiveDebugHudTelemetryTest::RunTest(const FString& Parameters)
             AllLines.Contains(RequiredLabel)
         );
     }
+
+    FAdaptiveDebugTelemetrySnapshot InvalidPositionProvenance = Snapshot;
+    InvalidPositionProvenance.Prediction.bUsedDistanceContext = false;
+    const FString InvalidPositionLines = FString::Join(
+        FAdaptiveDebugTelemetryFormatter::FormatHudLines(
+            InvalidPositionProvenance
+        ),
+        TEXT("\n")
+    );
+    TestTrue(
+        TEXT("Position provenance without distance context is rejected"),
+        InvalidPositionLines.Contains(
+            TEXT("Predicted Next Player Action: None")
+        )
+            && InvalidPositionLines.Contains(
+                TEXT("Prediction Source: None")
+            )
+    );
+
+    FAdaptiveDebugTelemetrySnapshot InvalidPlayerActionProvenance = Snapshot;
+    InvalidPlayerActionProvenance.Prediction.bUsedPositionContext = false;
+    const FString InvalidPlayerActionLines = FString::Join(
+        FAdaptiveDebugTelemetryFormatter::FormatHudLines(
+            InvalidPlayerActionProvenance
+        ),
+        TEXT("\n")
+    );
+    TestTrue(
+        TEXT("Player-action provenance without position context is rejected"),
+        InvalidPlayerActionLines.Contains(
+            TEXT("Predicted Next Player Action: None")
+        )
+            && InvalidPlayerActionLines.Contains(
+                TEXT("Prediction Source: None")
+            )
+    );
 
     const AAdaptiveGameMode* GameMode = GetDefault<AAdaptiveGameMode>();
     TestTrue(

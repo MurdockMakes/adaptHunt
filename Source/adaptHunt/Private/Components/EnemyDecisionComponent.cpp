@@ -1,7 +1,7 @@
 #include "Components/EnemyDecisionComponent.h"
 
 #include "adaptHunt.h"
-#include "AI/FrequencyActionPredictor.h"
+#include "AI/ConditionalActionPredictor.h"
 #include "Components/CombatComponent.h"
 #include "Components/CombatSnapshotComponent.h"
 #include "Components/EnemyCombatComponent.h"
@@ -43,7 +43,7 @@ UEnemyDecisionComponent::UEnemyDecisionComponent()
     , bStrafeRight(false)
     , NextCombatDecisionTime(0.0)
     , NextStrafeSwitchTime(0.0)
-    , Predictor(MakeUnique<FFrequencyActionPredictor>())
+    , Predictor(MakeUnique<FConditionalActionPredictor>())
     , AdaptationRandomStream(1337)
 {
     PrimaryComponentTick.bCanEverTick = false;
@@ -165,7 +165,7 @@ void UEnemyDecisionComponent::TrainPredictor(
 {
     if (!Predictor)
     {
-        Predictor = MakeUnique<FFrequencyActionPredictor>();
+        Predictor = MakeUnique<FConditionalActionPredictor>();
     }
 
     Predictor->Train(Dataset);
@@ -206,7 +206,7 @@ void UEnemyDecisionComponent::SetPredictor(
     Predictor = MoveTemp(NewPredictor);
     if (!Predictor)
     {
-        Predictor = MakeUnique<FFrequencyActionPredictor>();
+        Predictor = MakeUnique<FConditionalActionPredictor>();
     }
     ResetPredictor();
 }

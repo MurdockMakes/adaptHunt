@@ -38,7 +38,28 @@ bool IsUsableTelemetryPrediction(const FPredictionResult& Prediction)
             Prediction.PredictedAction
         )
         && FMath::IsFinite(Prediction.Confidence)
-        && Prediction.SupportingSampleCount >= 0;
+        && Prediction.SupportingSampleCount >= 0
+        && (!Prediction.bUsedContext
+            || (Prediction.ConditioningEnemyAction
+                    != EEnemyCombatAction::None
+                && AdaptiveCombat::IsKnownEnemyAction(
+                    Prediction.ConditioningEnemyAction
+                )))
+        && (!Prediction.bUsedDistanceContext
+            || (Prediction.bUsedContext
+                && AdaptiveCombat::IsKnownDistanceCategory(
+                    Prediction.ConditioningDistanceCategory
+                )))
+        && (!Prediction.bUsedPositionContext
+            || (Prediction.bUsedDistanceContext
+                && AdaptiveCombat::IsKnownRelativePosition(
+                    Prediction.ConditioningRelativePlayerPosition
+                )))
+        && (!Prediction.bUsedPreviousPlayerActionContext
+            || (Prediction.bUsedPositionContext
+                && AdaptiveCombat::IsTrackablePlayerAction(
+                    Prediction.ConditioningPreviousPlayerAction
+                )));
 }
 
 FAdaptiveConditionalPattern BuildPattern(
@@ -290,7 +311,7 @@ TArray<FString> FAdaptiveDebugTelemetryFormatter::FormatHudLines(
         : 0.0f;
 
     TArray<FString> Lines;
-    Lines.Reserve(16);
+    Lines.Reserve(17);
     Lines.Add(TEXT("ADAPTIVE LEARNING DEBUG"));
     Lines.Add(FString::Printf(
         TEXT("Round: %d / %d (%s)"),
@@ -332,6 +353,84 @@ TArray<FString> FAdaptiveDebugTelemetryFormatter::FormatHudLines(
         FMath::RoundToInt(
             SafePredictionConfidence * 100.0f
         )
+    ));
+    FString PredictionSource = TEXT("None");
+    if (bUsablePrediction)
+    {
+        if (Snapshot.Prediction.bUsedDistanceContext)
+        {
+            const TCHAR* DistanceName = TEXT("Medium");
+            switch (Snapshot.Prediction.ConditioningDistanceCategory)
+            {
+            case ECombatDistanceCategory::Close:
+                DistanceName = TEXT("Close");
+                break;
+            case ECombatDistanceCategory::Far:
+                DistanceName = TEXT("Far");
+                break;
+            default:
+                break;
+            }
+            PredictionSource = FString::Printf(
+                TEXT("After Enemy %s at %s Range"),
+                *GetEnemyActionName(
+                    Snapshot.Prediction.ConditioningEnemyAction
+                ),
+                DistanceName
+            );
+            if (Snapshot.Prediction.bUsedPositionContext)
+            {
+                const TCHAR* PositionName = TEXT("Front");
+                switch (
+                    Snapshot.Prediction.ConditioningRelativePlayerPosition
+                )
+                {
+                case ERelativePlayerPosition::Left:
+                    PositionName = TEXT("Left");
+                    break;
+                case ERelativePlayerPosition::Right:
+                    PositionName = TEXT("Right");
+                    break;
+                case ERelativePlayerPosition::Behind:
+                    PositionName = TEXT("Behind");
+                    break;
+                default:
+                    break;
+                }
+                PredictionSource += FString::Printf(
+                    TEXT(" (Player %s"),
+                    PositionName
+                );
+                if (Snapshot.Prediction.bUsedPreviousPlayerActionContext)
+                {
+                    PredictionSource += FString::Printf(
+                        TEXT(", after Player %s"),
+                        *GetPlayerActionName(
+                            Snapshot.Prediction
+                                .ConditioningPreviousPlayerAction
+                        )
+                    );
+                }
+                PredictionSource += TEXT(")");
+            }
+        }
+        else if (Snapshot.Prediction.bUsedContext)
+        {
+            PredictionSource = FString::Printf(
+                TEXT("After Enemy %s (Any Range)"),
+                *GetEnemyActionName(
+                    Snapshot.Prediction.ConditioningEnemyAction
+                )
+            );
+        }
+        else
+        {
+            PredictionSource = TEXT("Global Frequency");
+        }
+    }
+    Lines.Add(FString::Printf(
+        TEXT("Prediction Source: %s"),
+        *PredictionSource
     ));
     Lines.Add(FString::Printf(
         TEXT("Collected Training Samples: %d"),

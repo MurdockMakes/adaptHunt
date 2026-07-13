@@ -192,6 +192,9 @@ bool FAdaptiveLearningInputEdgeCasesTest::RunTest(
     Telemetry.Prediction.PredictedAction =
         static_cast<EPlayerCombatAction>(255);
     Telemetry.Prediction.Confidence = NotANumber;
+    Telemetry.Prediction.bUsedContext = true;
+    Telemetry.Prediction.ConditioningEnemyAction =
+        static_cast<EEnemyCombatAction>(255);
     const FString Lines = FString::Join(
         FAdaptiveDebugTelemetryFormatter::FormatHudLines(Telemetry),
         TEXT("\n")
@@ -208,6 +211,7 @@ bool FAdaptiveLearningInputEdgeCasesTest::RunTest(
         TEXT("HUD hides a malformed prediction"),
         Lines.Contains(TEXT("Predicted Next Player Action: None"))
             && Lines.Contains(TEXT("Prediction Confidence: 0%"))
+            && Lines.Contains(TEXT("Prediction Source: None"))
     );
     return true;
 }

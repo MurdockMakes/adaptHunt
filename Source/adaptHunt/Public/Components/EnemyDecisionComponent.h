@@ -55,7 +55,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "AI|Adaptation")
     void ResetPredictor();
 
-    /** Allows later milestones to replace the frequency model. */
+    /** Allows experiments to replace the default conditional model. */
     void SetPredictor(TUniquePtr<IPlayerActionPredictor> NewPredictor);
 
     UFUNCTION(BlueprintCallable, Category = "AI|Adaptation")
