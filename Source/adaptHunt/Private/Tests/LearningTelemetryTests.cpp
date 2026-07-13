@@ -208,6 +208,21 @@ bool FAdaptiveDebugHudTelemetryTest::RunTest(const FString& Parameters)
     Snapshot.CollectedSampleCount = 12;
     Snapshot.MostCommonPlayerAction = EPlayerCombatAction::DodgeLeft;
     Snapshot.CurrentEnemySelectedAction = EEnemyCombatAction::HeavyAttack;
+    Snapshot.bLastDecisionUrgent = true;
+    Snapshot.LastSelection.Action = EEnemyCombatAction::HeavyAttack;
+    Snapshot.LastSelection.BestScore = 1.18f;
+    Snapshot.LastSelection.SelectedScore = 1.12f;
+    Snapshot.LastSelection.CandidateActions = {
+        EEnemyCombatAction::LightAttack,
+        EEnemyCombatAction::HeavyAttack
+    };
+    FEnemyDecisionModifierTelemetry Modifier;
+    Modifier.Action = EEnemyCombatAction::HeavyAttack;
+    Modifier.RepetitionModifier = -0.22f;
+    Modifier.RecentOutcomeModifier = -0.12f;
+    Snapshot.LastDecisionModifiers.Add(Modifier);
+    Snapshot.RecentCommittedActionCount = 5;
+    Snapshot.RecentOutcomeMemoryCount = 4;
     Snapshot.LastCompletedRound = 1;
 
     FCombatDataset Dataset;
@@ -252,6 +267,10 @@ bool FAdaptiveDebugHudTelemetryTest::RunTest(const FString& Parameters)
         TEXT("Most Common Player Action: Dodge Left"),
         TEXT("Strongest Learned Conditional Pattern:"),
         TEXT("Current Enemy Selected Action: Heavy Attack"),
+        TEXT("Decision Trigger: URGENT"),
+        TEXT("Near-Best Selection: best 1.180, selected 1.120, 2 candidate(s)"),
+        TEXT("Heavy Attack modifiers: repetition -0.220, recent outcome -0.120"),
+        TEXT("Short-Term Memory: 5 commits, 4 resolved outcomes"),
         TEXT("ROUND 1 OBSERVED PATTERN:"),
         TEXT("Dodge Left: 75%"),
         TEXT("Block: 25%")

@@ -35,7 +35,7 @@ void AAdaptiveGameMode::StartPlay()
     UE_LOG(
         LogAdaptHunt,
         Log,
-        TEXT("Adaptive Hunt Milestone 17 initialized with game mode %s."),
+        TEXT("Adaptive Hunt initialized with game mode %s."),
         *GetName()
     );
 }
@@ -64,7 +64,7 @@ void AAdaptiveGameMode::SpawnOrFindEnemy()
         UE_LOG(
             LogAdaptHunt,
             Warning,
-            TEXT("Could not initialize the Milestone 17 combatants for %s."),
+            TEXT("Could not initialize the adaptive combatants for %s."),
             *GetName()
         );
         return;
@@ -97,6 +97,10 @@ void AAdaptiveGameMode::SpawnOrFindEnemy()
 
     if (SpawnedEnemy && SpawnedEnemy->GetEnemyDecisionComponent())
     {
+        if (!SpawnedEnemy->GetController())
+        {
+            SpawnedEnemy->SpawnDefaultController();
+        }
         SpawnedEnemy->GetEnemyDecisionComponent()->SetTargetActor(PlayerPawn);
     }
 

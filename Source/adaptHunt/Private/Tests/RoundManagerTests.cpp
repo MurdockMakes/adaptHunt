@@ -73,6 +73,10 @@ bool FAdaptiveRoundManagerDefaultsTest::RunTest(const FString& Parameters)
         TEXT("The intermission delay is configured"),
         RoundManager->GetIntermissionDuration() >= 0.0f
     );
+    TestTrue(
+        TEXT("The pre-round countdown is configured"),
+        RoundManager->GetPreRoundCountdownDuration() >= 0.0f
+    );
     return true;
 }
 
@@ -90,11 +94,13 @@ bool FAdaptiveThreeRoundProgressionTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("A fresh match begins"), Progression.BeginMatch());
     TestEqual(TEXT("The match begins in Round 1"), Progression.GetCurrentRound(), 1);
     TestTrue(
-        TEXT("Round 1 is in progress"),
-        Progression.GetPhase() == EAdaptiveRoundPhase::InProgress
+        TEXT("Round 1 begins with a readable countdown"),
+        Progression.GetPhase()
+            == EAdaptiveRoundPhase::PreRoundCountdown
     );
-    TestFalse(
-        TEXT("Round 1 is baseline observation"),
+    TestTrue(TEXT("Round 1 starts after the countdown"), Progression.StartCurrentRound());
+    TestTrue(
+        TEXT("Round 1 permits evidence-gated live prediction"),
         URoundManager::IsPredictionRound(1)
     );
     TestTrue(
@@ -113,6 +119,12 @@ bool FAdaptiveThreeRoundProgressionTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Round 2 starts"), Progression.AdvanceToNextRound());
     TestEqual(TEXT("The active round is 2"), Progression.GetCurrentRound(), 2);
     TestTrue(
+        TEXT("Round 2 also has a pre-round countdown"),
+        Progression.GetPhase()
+            == EAdaptiveRoundPhase::PreRoundCountdown
+    );
+    TestTrue(TEXT("Round 2 enters combat"), Progression.StartCurrentRound());
+    TestTrue(
         TEXT("Round 2 is prediction-eligible"),
         URoundManager::IsPredictionRound(2)
     );
@@ -127,6 +139,7 @@ bool FAdaptiveThreeRoundProgressionTest::RunTest(const FString& Parameters)
     );
     TestTrue(TEXT("Round 3 starts"), Progression.AdvanceToNextRound());
     TestEqual(TEXT("The active round is 3"), Progression.GetCurrentRound(), 3);
+    TestTrue(TEXT("Round 3 enters combat"), Progression.StartCurrentRound());
     TestTrue(
         TEXT("Round 3 is prediction-eligible"),
         URoundManager::IsPredictionRound(3)

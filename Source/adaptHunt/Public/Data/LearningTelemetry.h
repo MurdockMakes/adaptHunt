@@ -1,6 +1,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AI/AdaptiveCounterOutcome.h"
+#include "AI/AdaptiveTacticalProfile.h"
+#include "AI/EnemyDecisionPolicy.h"
 #include "Data/CombatDataset.h"
 #include "Data/PredictionResult.h"
 
@@ -38,12 +41,23 @@ struct ADAPTHUNT_API FAdaptiveLearningSummary
     FAdaptiveConditionalPattern StrongestConditionalPattern;
 };
 
+/** Per-candidate debug values from the two short-term memory channels. */
+struct ADAPTHUNT_API FEnemyDecisionModifierTelemetry
+{
+    EEnemyCombatAction Action = EEnemyCombatAction::None;
+    float RepetitionModifier = 0.0f;
+    float RecentOutcomeModifier = 0.0f;
+};
+
 /** Value-only state formatted for the greybox HUD. */
 struct ADAPTHUNT_API FAdaptiveDebugTelemetrySnapshot
 {
     int32 CurrentRound = 0;
     int32 TotalRounds = 3;
     bool bPredictionsEnabled = false;
+    FString RoundPresentationStage;
+    FString AdaptationObservation;
+    FString AdaptationAdjustment;
 
     float PlayerHealth = 0.0f;
     float PlayerMaxHealth = 0.0f;
@@ -51,6 +65,8 @@ struct ADAPTHUNT_API FAdaptiveDebugTelemetrySnapshot
     float EnemyMaxHealth = 0.0f;
     float PlayerStamina = 0.0f;
     float PlayerMaxStamina = 0.0f;
+    float EnemyStamina = 0.0f;
+    float EnemyMaxStamina = 0.0f;
 
     EPlayerCombatAction LastPlayerAction = EPlayerCombatAction::None;
     FPredictionResult Prediction;
@@ -60,6 +76,20 @@ struct ADAPTHUNT_API FAdaptiveDebugTelemetrySnapshot
     FAdaptiveConditionalPattern StrongestLearnedPattern;
     EEnemyCombatAction CurrentEnemySelectedAction =
         EEnemyCombatAction::None;
+    bool bLastDecisionUrgent = false;
+    FEnemyActionSelectionResult LastSelection;
+    TArray<FEnemyDecisionModifierTelemetry> LastDecisionModifiers;
+    int32 RecentCommittedActionCount = 0;
+    int32 RecentOutcomeMemoryCount = 0;
+    FAdaptiveTacticalProfile AdaptiveTacticalProfile;
+    int32 AdaptiveCounterUsesRemaining = 0;
+    float AdaptiveCounterCooldownRemaining = 0.0f;
+    int32 CounterOutcomeCount = 0;
+    bool bHasLastCounterOutcome = false;
+    FAdaptiveCounterOutcomeRecord LastCounterOutcome;
+    TArray<FAdaptiveCounterEffectivenessSummary>
+        LastRoundCounterEffectiveness;
+    FAdaptiveCounterEffectivenessSummary ActiveCounterEffectiveness;
 
     int32 LastCompletedRound = 0;
     FAdaptiveConditionalPattern LastRoundObservedPattern;

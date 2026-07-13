@@ -7,7 +7,9 @@
 
 class UCameraComponent;
 class UCombatComponent;
+class UCombatFeedbackComponent;
 class UCombatSnapshotComponent;
+class UGreyboxPresentationComponent;
 class UHealthComponent;
 class UInputAction;
 class UInputMappingContext;
@@ -41,11 +43,15 @@ public:
     UHealthComponent* GetHealthComponent() const;
     UStaminaComponent* GetStaminaComponent() const;
     UCombatComponent* GetCombatComponent() const;
+    UCombatFeedbackComponent* GetCombatFeedbackComponent() const;
+    UGreyboxPresentationComponent* GetGreyboxPresentationComponent() const;
     UCombatSnapshotComponent* GetCombatSnapshotComponent() const;
     UPlayerBehaviorTrackerComponent* GetBehaviorTrackerComponent() const;
     const UInputMappingContext* GetDefaultMappingContext() const;
+    float GetCameraPositionLagSpeed() const;
+    float GetCameraRotationSmoothingSpeed() const;
 
-    /** Deterministic resource and Milestone 4 combat test hooks. */
+    /** Deterministic resource and combat verification hooks. */
     UFUNCTION(Exec)
     void DebugDamageSelf(float DamageAmount = 25.0f);
 
@@ -79,18 +85,29 @@ public:
     UFUNCTION(Exec)
     void DebugSpawnCombatDummy(float Distance = 250.0f);
 
-    /** Captures and logs every Milestone 6 learning feature. */
+    /** Captures and logs every current learning feature. */
     UFUNCTION(Exec)
     void DebugCombatSnapshot();
 
-    /** Logs all Milestone 7 labeled player decisions. */
+    /** Logs all labeled player decisions in the match dataset. */
     UFUNCTION(Exec)
     void DebugBehaviorDataset();
 
     UFUNCTION(Exec)
     void DebugResetBehaviorDataset();
 
+    UFUNCTION(Exec)
+    void DebugToggleAdaptiveHUD();
+
+    /** Match-complete action; ignored during an active match. */
+    UFUNCTION(Exec)
+    void RestartMatch();
+
+protected:
+    virtual void BeginPlay() override;
+
 private:
+    void ApplyResponsivenessTuning();
     void MoveForward(const FInputActionValue& Value);
     void MoveRight(const FInputActionValue& Value);
     void LookYaw(const FInputActionValue& Value);
@@ -122,6 +139,13 @@ private:
 
     UPROPERTY(VisibleAnywhere, Category = "Character|Combat")
     TObjectPtr<UCombatComponent> CombatComponent;
+
+    UPROPERTY(VisibleAnywhere, Category = "Character|Combat|Feedback")
+    TObjectPtr<UCombatFeedbackComponent> CombatFeedbackComponent;
+
+    /** Observes gameplay and animates only the collision-free greybox body. */
+    UPROPERTY(VisibleAnywhere, Category = "Character|Greybox")
+    TObjectPtr<UGreyboxPresentationComponent> GreyboxPresentationComponent;
 
     UPROPERTY(VisibleAnywhere, Category = "Character|Machine Learning")
     TObjectPtr<UCombatSnapshotComponent> CombatSnapshotComponent;
@@ -171,4 +195,43 @@ private:
 
     UPROPERTY(VisibleAnywhere, Category = "Input")
     TObjectPtr<UInputAction> HealAction;
+
+    UPROPERTY(VisibleAnywhere, Category = "Input")
+    TObjectPtr<UInputAction> RestartMatchAction;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Movement", meta = (ClampMin = "0.0"))
+    float MovementAcceleration;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Movement", meta = (ClampMin = "0.0"))
+    float WalkingBrakingDeceleration;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Movement", meta = (ClampMin = "0.0"))
+    float WalkingGroundFriction;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Movement", meta = (ClampMin = "0.0"))
+    float WalkingBrakingFriction;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Movement", meta = (ClampMin = "0.0"))
+    float MovementRotationRateYaw;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Movement", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float MovementAirControl;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Movement", meta = (ClampMin = "0.0"))
+    float MinimumAnalogWalkSpeed;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Camera")
+    bool bEnableCameraPositionLag;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Camera", meta = (ClampMin = "0.0"))
+    float CameraPositionLagSpeed;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Camera", meta = (ClampMin = "0.0"))
+    float CameraPositionLagMaxDistance;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Camera")
+    bool bEnableCameraRotationSmoothing;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Character|Responsiveness|Camera", meta = (ClampMin = "0.0"))
+    float CameraRotationSmoothingSpeed;
 };

@@ -4,7 +4,9 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/CombatComponent.h"
+#include "Components/CombatFeedbackComponent.h"
 #include "Components/CombatSnapshotComponent.h"
+#include "Components/GreyboxPresentationComponent.h"
 #include "Components/HealthComponent.h"
 #include "Components/PlayerBehaviorTrackerComponent.h"
 #include "Components/StaminaComponent.h"
@@ -19,17 +21,43 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Game/AdaptiveGameMode.h"
+#include "Game/AdaptiveHuntTuningSettings.h"
+#include "Game/RoundManager.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
 #include "Kismet/GameplayStatics.h"
+#include "UI/AdaptiveDebugHUD.h"
 #include "UObject/ConstructorHelpers.h"
 
 AAdaptivePlayerCharacter::AAdaptivePlayerCharacter()
 {
     PrimaryActorTick.bCanEverTick = false;
+
+    const FAdaptiveMovementTuning MovementTuning =
+        UAdaptiveHuntTuningSettings::Get().Movement.GetSanitized();
+    MovementAcceleration = MovementTuning.PlayerAcceleration;
+    WalkingBrakingDeceleration =
+        MovementTuning.PlayerBrakingDeceleration;
+    WalkingGroundFriction = MovementTuning.PlayerGroundFriction;
+    WalkingBrakingFriction = MovementTuning.PlayerBrakingFriction;
+    MovementRotationRateYaw = MovementTuning.PlayerRotationRateYaw;
+    MovementAirControl = MovementTuning.PlayerAirControl;
+    MinimumAnalogWalkSpeed =
+        MovementTuning.PlayerMinimumAnalogWalkSpeed;
+
+    const FAdaptiveCameraTuning CameraTuning =
+        UAdaptiveHuntTuningSettings::Get().Camera.GetSanitized();
+    bEnableCameraPositionLag = CameraTuning.bEnablePositionLag;
+    CameraPositionLagSpeed = CameraTuning.PositionLagSpeed;
+    CameraPositionLagMaxDistance = CameraTuning.PositionLagMaxDistance;
+    bEnableCameraRotationSmoothing =
+        CameraTuning.bEnableRotationSmoothing;
+    CameraRotationSmoothingSpeed =
+        CameraTuning.RotationSmoothingSpeed;
 
     GetCapsuleComponent()->InitCapsuleSize(42.0f, 96.0f);
 
@@ -39,12 +67,8 @@ AAdaptivePlayerCharacter::AAdaptivePlayerCharacter()
 
     UCharacterMovementComponent* Movement = GetCharacterMovement();
     Movement->bOrientRotationToMovement = true;
-    Movement->RotationRate = FRotator(0.0f, 720.0f, 0.0f);
-    Movement->JumpZVelocity = 520.0f;
-    Movement->AirControl = 0.35f;
-    Movement->MaxWalkSpeed = 500.0f;
-    Movement->MinAnalogWalkSpeed = 20.0f;
-    Movement->BrakingDecelerationWalking = 2000.0f;
+    Movement->JumpZVelocity = MovementTuning.PlayerJumpVelocity;
+    Movement->MaxWalkSpeed = MovementTuning.PlayerMaxWalkSpeed;
 
     BodyMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BodyMesh"));
     BodyMesh->SetupAttachment(GetCapsuleComponent());
@@ -68,6 +92,18 @@ AAdaptivePlayerCharacter::AAdaptivePlayerCharacter()
     CombatComponent = CreateDefaultSubobject<UCombatComponent>(
         TEXT("CombatComponent")
     );
+    CombatFeedbackComponent =
+        CreateDefaultSubobject<UCombatFeedbackComponent>(
+            TEXT("CombatFeedbackComponent")
+        );
+    GreyboxPresentationComponent =
+        CreateDefaultSubobject<UGreyboxPresentationComponent>(
+            TEXT("GreyboxPresentationComponent")
+        );
+    GreyboxPresentationComponent->SetPresentationMesh(BodyMesh);
+    GreyboxPresentationComponent->SetPresentationRole(
+        EGreyboxPresentationRole::Player
+    );
     CombatSnapshotComponent =
         CreateDefaultSubobject<UCombatSnapshotComponent>(
             TEXT("CombatSnapshotComponent")
@@ -81,9 +117,15 @@ AAdaptivePlayerCharacter::AAdaptivePlayerCharacter()
         TEXT("CameraBoom")
     );
     CameraBoom->SetupAttachment(GetRootComponent());
-    CameraBoom->SetRelativeLocation(FVector(0.0f, 0.0f, 70.0f));
-    CameraBoom->TargetArmLength = 450.0f;
-    CameraBoom->SocketOffset = FVector(0.0f, 55.0f, 15.0f);
+    CameraBoom->SetRelativeLocation(
+        FVector(0.0f, 0.0f, CameraTuning.BoomHeight)
+    );
+    CameraBoom->TargetArmLength = CameraTuning.TargetArmLength;
+    CameraBoom->SocketOffset = FVector(
+        0.0f,
+        CameraTuning.SocketSideOffset,
+        CameraTuning.SocketHeightOffset
+    );
     CameraBoom->bUsePawnControlRotation = true;
 
     FollowCamera = CreateDefaultSubobject<UCameraComponent>(
@@ -153,6 +195,11 @@ AAdaptivePlayerCharacter::AAdaptivePlayerCharacter()
     HealAction = CreateDefaultSubobject<UInputAction>(TEXT("HealAction"));
     HealAction->ValueType = EInputActionValueType::Boolean;
 
+    RestartMatchAction = CreateDefaultSubobject<UInputAction>(
+        TEXT("RestartMatchAction")
+    );
+    RestartMatchAction->ValueType = EInputActionValueType::Boolean;
+
     UInputModifierNegate* MoveBackwardModifier =
         CreateDefaultSubobject<UInputModifierNegate>(
             TEXT("MoveBackwardModifier")
@@ -217,6 +264,79 @@ AAdaptivePlayerCharacter::AAdaptivePlayerCharacter()
     );
     DefaultMappingContext->MapKey(HealAction, EKeys::R);
     DefaultMappingContext->MapKey(HealAction, EKeys::Gamepad_DPad_Up);
+    DefaultMappingContext->MapKey(RestartMatchAction, EKeys::Enter);
+    DefaultMappingContext->MapKey(
+        RestartMatchAction,
+        EKeys::Gamepad_Special_Right
+    );
+
+    ApplyResponsivenessTuning();
+}
+
+void AAdaptivePlayerCharacter::BeginPlay()
+{
+    Super::BeginPlay();
+    ApplyResponsivenessTuning();
+}
+
+void AAdaptivePlayerCharacter::ApplyResponsivenessTuning()
+{
+    if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+    {
+        Movement->MaxAcceleration = FMath::Max(
+            0.0f,
+            MovementAcceleration
+        );
+        Movement->BrakingDecelerationWalking = FMath::Max(
+            0.0f,
+            WalkingBrakingDeceleration
+        );
+        Movement->GroundFriction = FMath::Max(
+            0.0f,
+            WalkingGroundFriction
+        );
+        Movement->bUseSeparateBrakingFriction = true;
+        Movement->BrakingFriction = FMath::Max(
+            0.0f,
+            WalkingBrakingFriction
+        );
+        Movement->RotationRate = FRotator(
+            0.0f,
+            FMath::Max(0.0f, MovementRotationRateYaw),
+            0.0f
+        );
+        Movement->AirControl = FMath::Clamp(
+            MovementAirControl,
+            0.0f,
+            1.0f
+        );
+        Movement->MinAnalogWalkSpeed = FMath::Clamp(
+            MinimumAnalogWalkSpeed,
+            0.0f,
+            Movement->MaxWalkSpeed
+        );
+    }
+
+    if (CameraBoom)
+    {
+        CameraBoom->bEnableCameraLag = bEnableCameraPositionLag;
+        CameraBoom->CameraLagSpeed = FMath::Max(
+            0.0f,
+            CameraPositionLagSpeed
+        );
+        CameraBoom->CameraLagMaxDistance = FMath::Max(
+            0.0f,
+            CameraPositionLagMaxDistance
+        );
+        CameraBoom->bEnableCameraRotationLag =
+            bEnableCameraRotationSmoothing;
+        CameraBoom->CameraRotationLagSpeed = FMath::Max(
+            0.0f,
+            CameraRotationSmoothingSpeed
+        );
+        CameraBoom->bUseCameraLagSubstepping = true;
+        CameraBoom->CameraLagMaxTimeStep = 1.0f / 60.0f;
+    }
 }
 
 void AAdaptivePlayerCharacter::SetupPlayerInputComponent(
@@ -354,6 +474,12 @@ void AAdaptivePlayerCharacter::SetupPlayerInputComponent(
         this,
         &AAdaptivePlayerCharacter::Heal
     );
+    EnhancedInput->BindAction(
+        RestartMatchAction,
+        ETriggerEvent::Started,
+        this,
+        &AAdaptivePlayerCharacter::RestartMatch
+    );
 
     UE_LOG(
         LogAdaptHunt,
@@ -393,6 +519,18 @@ UCombatComponent* AAdaptivePlayerCharacter::GetCombatComponent() const
     return CombatComponent;
 }
 
+UCombatFeedbackComponent*
+AAdaptivePlayerCharacter::GetCombatFeedbackComponent() const
+{
+    return CombatFeedbackComponent;
+}
+
+UGreyboxPresentationComponent*
+AAdaptivePlayerCharacter::GetGreyboxPresentationComponent() const
+{
+    return GreyboxPresentationComponent;
+}
+
 UCombatSnapshotComponent*
 AAdaptivePlayerCharacter::GetCombatSnapshotComponent() const
 {
@@ -409,6 +547,16 @@ const UInputMappingContext*
 AAdaptivePlayerCharacter::GetDefaultMappingContext() const
 {
     return DefaultMappingContext;
+}
+
+float AAdaptivePlayerCharacter::GetCameraPositionLagSpeed() const
+{
+    return FMath::Max(0.0f, CameraPositionLagSpeed);
+}
+
+float AAdaptivePlayerCharacter::GetCameraRotationSmoothingSpeed() const
+{
+    return FMath::Max(0.0f, CameraRotationSmoothingSpeed);
 }
 
 void AAdaptivePlayerCharacter::DebugDamageSelf(const float DamageAmount)
@@ -441,6 +589,7 @@ void AAdaptivePlayerCharacter::DebugResetResources()
     CombatComponent->ResetCombatState();
     HealthComponent->ResetHealth();
     StaminaComponent->ResetStamina();
+    GreyboxPresentationComponent->ResetPresentation();
 }
 
 void AAdaptivePlayerCharacter::DebugLightAttack()
@@ -530,9 +679,42 @@ void AAdaptivePlayerCharacter::DebugResetBehaviorDataset()
     }
 }
 
+void AAdaptivePlayerCharacter::DebugToggleAdaptiveHUD()
+{
+    const APlayerController* PlayerController = Cast<APlayerController>(
+        GetController()
+    );
+    AAdaptiveDebugHUD* Hud = PlayerController
+        ? Cast<AAdaptiveDebugHUD>(PlayerController->GetHUD())
+        : nullptr;
+    if (Hud)
+    {
+        Hud->DebugToggleAdaptiveHUD();
+    }
+}
+
+void AAdaptivePlayerCharacter::RestartMatch()
+{
+    AAdaptiveGameMode* GameMode = Cast<AAdaptiveGameMode>(
+        UGameplayStatics::GetGameMode(this)
+    );
+    URoundManager* RoundManager = GameMode
+        ? GameMode->GetRoundManager()
+        : nullptr;
+    if (RoundManager && RoundManager->RestartMatch())
+    {
+        UE_LOG(
+            LogAdaptHunt,
+            Log,
+            TEXT("Player requested a clean match restart.")
+        );
+    }
+}
+
 void AAdaptivePlayerCharacter::MoveForward(const FInputActionValue& Value)
 {
-    if (!Controller)
+    if (!Controller || (CombatComponent
+        && !CombatComponent->IsMovementAllowed()))
     {
         return;
     }
@@ -548,7 +730,8 @@ void AAdaptivePlayerCharacter::MoveForward(const FInputActionValue& Value)
 
 void AAdaptivePlayerCharacter::MoveRight(const FInputActionValue& Value)
 {
-    if (!Controller)
+    if (!Controller || (CombatComponent
+        && !CombatComponent->IsMovementAllowed()))
     {
         return;
     }

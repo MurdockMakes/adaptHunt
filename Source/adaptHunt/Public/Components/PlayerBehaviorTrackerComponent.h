@@ -19,7 +19,7 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(
  * Converts observed player decisions into supervised-learning samples.
  *
  * This component owns the dataset but does not interpret or predict from it.
- * Milestone 8 can therefore replace predictor implementations without
+ * Predictor implementations can therefore be replaced without
  * changing combat input, snapshot capture, or sample collection.
  */
 UCLASS(ClassGroup = (MachineLearning), meta = (BlueprintSpawnableComponent))

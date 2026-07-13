@@ -1,5 +1,7 @@
 #include "AI/EnemyActionScorer.h"
 
+#include "AI/EnemyDecisionPolicy.h"
+
 namespace
 {
 const EEnemyCombatAction CandidateActions[] = {
@@ -416,14 +418,146 @@ FEnemyActionScore FEnemyActionScorer::ScoreAction(
         ) * PredictionStrength;
     }
 
-    if (Action == Snapshot.PreviousEnemyAction)
+    const float LightAttackPressure = SanitizeNormalized(
+        Context.RecentLightAttackPressure,
+        0.0f
+    );
+    const float MaximumPatternAdjustment = FMath::IsFinite(
+        Context.MaximumLightAttackPatternAdjustment
+    )
+        ? FMath::Clamp(
+            Context.MaximumLightAttackPatternAdjustment,
+            0.0f,
+            0.65f
+        )
+        : 0.0f;
+    if (LightAttackPressure > 0.0f)
     {
-        Utility -= 0.12f;
+        float PatternResponseScale = 0.0f;
+        if (Action == EEnemyCombatAction::Block)
+        {
+            PatternResponseScale = 1.0f;
+        }
+        else if (Action == EEnemyCombatAction::Dodge)
+        {
+            PatternResponseScale = 0.75f;
+        }
+        else if (IsOffensiveAction(Action))
+        {
+            // Stop damage racing once repeated light attacks are established.
+            PatternResponseScale = -0.65f;
+        }
+        Utility += PatternResponseScale * MaximumPatternAdjustment
+            * LightAttackPressure;
     }
 
-    Result.Score = FMath::IsFinite(Utility)
-        ? FMath::Clamp(Utility, 0.0f, 1.0f)
+    const float SafeMaximumTacticalAdjustment = FMath::IsFinite(
+        Context.MaximumTacticalUtilityAdjustment
+    )
+        ? FMath::Clamp(
+            Context.MaximumTacticalUtilityAdjustment,
+            0.0f,
+            0.35f
+        )
         : 0.0f;
+    if (const float* TacticalAdjustment =
+        Context.TacticalUtilityModifiers.Find(Action))
+    {
+        Utility += FMath::IsFinite(*TacticalAdjustment)
+            ? FMath::Clamp(
+                *TacticalAdjustment,
+                -SafeMaximumTacticalAdjustment,
+                SafeMaximumTacticalAdjustment
+            )
+            : 0.0f;
+    }
+
+    const float SafeMaximumAdaptiveAdjustment = FMath::IsFinite(
+        Context.MaximumAdaptiveUtilityAdjustment
+    )
+        ? FMath::Clamp(
+            Context.MaximumAdaptiveUtilityAdjustment,
+            0.0f,
+            0.25f
+        )
+        : 0.0f;
+    if (const float* AdaptiveAdjustment =
+        Context.AdaptiveUtilityModifiers.Find(Action))
+    {
+        Utility += FMath::IsFinite(*AdaptiveAdjustment)
+            ? FMath::Clamp(
+                *AdaptiveAdjustment,
+                -SafeMaximumAdaptiveAdjustment,
+                SafeMaximumAdaptiveAdjustment
+            )
+            : 0.0f;
+    }
+
+    const float SafeMaximumOutcomeAdjustment = FMath::IsFinite(
+        Context.MaximumOutcomeEffectivenessUtilityAdjustment
+    )
+        ? FMath::Clamp(
+            Context.MaximumOutcomeEffectivenessUtilityAdjustment,
+            0.0f,
+            0.10f
+        )
+        : 0.0f;
+    if (const float* OutcomeAdjustment =
+        Context.OutcomeEffectivenessUtilityModifiers.Find(Action))
+    {
+        Utility += FMath::IsFinite(*OutcomeAdjustment)
+            ? FMath::Clamp(
+                *OutcomeAdjustment,
+                -SafeMaximumOutcomeAdjustment,
+                SafeMaximumOutcomeAdjustment
+            )
+            : 0.0f;
+    }
+
+    const float SafeMaximumRepetitionAdjustment = FMath::IsFinite(
+        Context.MaximumRepetitionUtilityAdjustment
+    )
+        ? FMath::Clamp(
+            Context.MaximumRepetitionUtilityAdjustment,
+            0.0f,
+            0.6f
+        )
+        : 0.0f;
+    if (const float* RepetitionAdjustment =
+        Context.RepetitionUtilityModifiers.Find(Action))
+    {
+        Utility += FMath::IsFinite(*RepetitionAdjustment)
+            ? FMath::Clamp(
+                *RepetitionAdjustment,
+                -SafeMaximumRepetitionAdjustment,
+                SafeMaximumRepetitionAdjustment
+            )
+            : 0.0f;
+    }
+
+    const float SafeMaximumRecentOutcomeAdjustment = FMath::IsFinite(
+        Context.MaximumRecentOutcomeUtilityAdjustment
+    )
+        ? FMath::Clamp(
+            Context.MaximumRecentOutcomeUtilityAdjustment,
+            0.0f,
+            0.4f
+        )
+        : 0.0f;
+    if (const float* RecentOutcomeAdjustment =
+        Context.RecentOutcomeUtilityModifiers.Find(Action))
+    {
+        Utility += FMath::IsFinite(*RecentOutcomeAdjustment)
+            ? FMath::Clamp(
+                *RecentOutcomeAdjustment,
+                -SafeMaximumRecentOutcomeAdjustment,
+                SafeMaximumRecentOutcomeAdjustment
+            )
+            : 0.0f;
+    }
+
+    Result.UnclampedScore = FMath::IsFinite(Utility) ? Utility : 0.0f;
+    Result.Score = FMath::Clamp(Result.UnclampedScore, 0.0f, 1.0f);
     return Result;
 }
 
@@ -438,19 +572,5 @@ EEnemyCombatAction FEnemyActionScorer::SelectBestAction(
     const TArray<FEnemyActionScore>& Scores
 ) const
 {
-    EEnemyCombatAction BestAction = EEnemyCombatAction::None;
-    float BestScore = -1.0f;
-    for (const FEnemyActionScore& Candidate : Scores)
-    {
-        if (Candidate.bAvailable
-            && AdaptiveCombat::IsUtilityEnemyAction(Candidate.Action)
-            && FMath::IsFinite(Candidate.Score)
-            && Candidate.Score >= 0.0f
-            && Candidate.Score > BestScore)
-        {
-            BestAction = Candidate.Action;
-            BestScore = Candidate.Score;
-        }
-    }
-    return BestAction;
+    return FEnemyActionSelectionPolicy::SelectBest(Scores);
 }

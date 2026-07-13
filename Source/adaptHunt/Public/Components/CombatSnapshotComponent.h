@@ -22,7 +22,7 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(
  *
  * The component belongs to the player and observes committed combat actions
  * through delegates. It does not Tick; consumers request a snapshot when they
- * need one. Milestone 7 can therefore label snapshots without depending on
+ * need one. Behavior tracking can therefore label snapshots without depending on
  * character input or enemy decision implementation details.
  */
 UCLASS(ClassGroup = (MachineLearning), meta = (BlueprintSpawnableComponent))
